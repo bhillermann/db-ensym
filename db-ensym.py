@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, URL
 from datetime import date
 import pandas as pd
 import geopandas as gpd
@@ -30,11 +30,17 @@ sub_string = ''
 
 
 # Connect to your postgres DB
-# conn = psycopg2.connect(dbname="gisdb", user="gisuser", password="#!gis^")
-engine = create_engine('postgresql://gisuser:#!gis^@'
-                       'Brendon-Lenovo.local/gisdb'\
-                        pool_size=20, max_overflow=20)
+url_object = URL.Create(
+    "postgresql+psycopg2",
+    username="gis",
+    password="#!gis^",
+    host="Brendon-Lenovo.local",
+    database="gisdb",
+    pool_size=20,
+    max_overflow=20
+)
 
+engine = create_engine(url_object)
 
 # Define the SQL query
 sql_query = """
