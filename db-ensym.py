@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 from sqlalchemy import create_engine, text
 from datetime import date
 import pandas as pd
