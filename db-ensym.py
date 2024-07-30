@@ -178,4 +178,4 @@ print("=====Final Dataframe====\n\n", ensym_gdf)
 
 # Write the Ensym shapefile
 print("\n\nWriting shapefile:", args.shapefile)
-ensym_gdf.to_file(args.shapefile, schema=schema)
+ensym_gdf.to_file(args.shapefile, schema=schema, engine='fiona')
