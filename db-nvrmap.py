@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 from sqlalchemy import create_engine, text, URL
-from datetime import date
+from datetime import datetime
 import pandas as pd
 import geopandas as gpd
 import argparse
@@ -90,7 +90,7 @@ if bioevc_gdf.empty:
 
 # Set the CRS for the GeoDataFrame
 bioevc_gdf = bioevc_gdf.set_crs('epsg:3111')
-
+bioevc_gdf = bioevc_gdf.to_crs('epsg:7899')
 
 # Import the EVC benchmark data with pandas
 # Open the Excel file. Quit if not FileNotFoundError
@@ -151,7 +151,7 @@ if args.gainscore:
 else:
     ensym_gdf['gain_score'] = default_gain_score
 # Calculate the area in hecatres
-ensym_gdf['surv_date'] = date.today()
+ensym_gdf['surv_date'] = datetime.today().strftime('%Y%m%d')
 
 # Drop the extra columns
 ensym_gdf = ensym_gdf.drop(['bioregcode', 'evc', 'view_pfi'], axis=1)
@@ -162,12 +162,13 @@ cols = cols[+1:] + cols[:+1]
 ensym_gdf = ensym_gdf[cols]
 
 
-schema = gpd.io.file.infer_schema(ensym_gdf)
-schema['properties']['surv_date'] = 'date'
-schema['properties']['zone_id'] = 'str'
+# schema = gpd.io.file.infer_schema(ensym_gdf)
+# schema['properties']['surv_date'] = 'date'
+# schema['properties']['zone_id'] = 'str'
 
 print("=====Final Dataframe====\n\n", ensym_gdf)
 
 # Write the Ensym shapefile
 print("\n\nWriting shapefile:", args.shapefile)
-ensym_gdf.to_file(args.shapefile, schema=schema)
+#ensym_gdf.to_file(args.shapefile, schema=schema)
+ensym_gdf.to_file(args.shapefile)
