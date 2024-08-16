@@ -65,7 +65,7 @@ FROM (
         SELECT evc.evc, evc.x_evcname, parcel.pfi AS view_pfi,
             (ST_Dump(ST_Intersection(ST_Buffer(parcel.geom, -6),\
                   evc.geom))).geom geom
-        FROM parcel_view_gda94 parcel
+        FROM parcel_view parcel
         INNER JOIN nv1750_evc_gda94 evc
         ON ST_Intersects(parcel.geom, evc.geom)
         WHERE parcel.pfi IN ({', '.join([f"'{pfi}'" for pfi in args.view_pfi])})
