@@ -63,11 +63,11 @@ FROM (
               geom
     FROM (
         SELECT evc.evc, evc.x_evcname, parcel.pfi AS view_pfi,
-            (ST_Dump(ST_Intersection(ST_Buffer(parcel.geom, -6),\
+            (ST_Dump(ST_Intersection(ST_Buffer(ST_Transform(parcel.geom, 3111), -6),\
                   evc.geom))).geom geom
         FROM parcel_view parcel
         INNER JOIN nv1750_evc_gda94 evc
-        ON ST_Intersects(parcel.geom, evc.geom)
+        ON ST_Intersects(ST_Transform(parcel.geom, 3111), evc.geom)
         WHERE parcel.pfi IN ({', '.join([f"'{pfi}'" for pfi in args.view_pfi])})
     ) AS clipped
     INNER JOIN bioregions_gda94 bio
