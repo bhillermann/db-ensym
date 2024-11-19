@@ -66,11 +66,11 @@ FROM (
             (ST_Dump(ST_Intersection(ST_Buffer(parcel.geom, -6),\
                   evc.geom))).geom geom
         FROM parcel_view parcel
-        INNER JOIN nv1750_evc_gda94 evc
+        INNER JOIN nv1750_evc evc
         ON ST_Intersects(parcel.geom, evc.geom)
         WHERE parcel.pfi IN ({', '.join([f"'{pfi}'" for pfi in args.view_pfi])})
     ) AS clipped
-    INNER JOIN bioregions_gda94 bio
+    INNER JOIN bioregions bio
     ON ST_Intersects(clipped.geom, bio.geom)
     WHERE ST_Dimension(clipped.geom) = 2
 ) AS bio_clipped
@@ -89,7 +89,8 @@ if bioevc_gdf.empty:
     exit()
 
 # Set the CRS for the GeoDataFrame
-bioevc_gdf = bioevc_gdf.set_crs('epsg:3111')
+bioevc_gdf = bioevc_gdf.set_crs('epsg:7899')
+bioevc_gdf = bioevc_gdf.to_crs('epsg:3111')
 
 
 # Import the EVC benchmark data with pandas
