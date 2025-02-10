@@ -26,15 +26,14 @@ parser = argparse.ArgumentParser(description=r'Process View PFIs to an Ensym'
                                  r' shapefile.')
 parser.add_argument('view_pfi', metavar='N', type=int, nargs='+',
                     help='PFI of the Parcel View')
-parser.add_argument("-s", "--shapefile", default='ensym',
-                    help="Name of the shapefile to write to.\n If no extention\
+parser.add_argument('-s', '--shapefile', default='ensym',
+                    help='Name of the shapefile to write to.\n If no extention\
                     is specified then shapefiles will be written to a \
                     directory instead. If not used, the default folder \
-                    \"ensym\" will be used")
-parser.add_argument("-g", "--gainscore", type=float,
-                    help="Set the value of the gainscore. Default is \"0.22\"")
-parser.add_argument("-2013", type=bool, default=False, 
-                    help="Generate 2013 Ensym.")
+                    \"ensym\" will be used')
+parser.add_argument('-g', '--gainscore', type=float,
+                    help='Set the value of the gainscore. Default is \"0.22\"')
+parser.add_argument('-beu', action='store_true', help='Generate 2013 Ensym.')
 
 args = parser.parse_args()
 
@@ -172,14 +171,18 @@ cols = cols[+1:] + cols[:+1]
 # Apply the new column order
 ensym_gdf = ensym_gdf[cols]
 
+# Change columns for 2013 Ensym
+if args.beu:
+    ensym_gdf = ensym_gdf.drop(['HH_EVC', 'BCS', 'LT_CNT'], axis=1)
+    ensym_gdf = ensym_gdf.rename(columns={'G_S': 'G_HA'})
+    ensym_gdf = ensym_gdf[['HH_PAI', 'HH_SI', 'HH_ZI', 'HH_VAC', 'HH_CP', 
+                           'HH_D', 'HH_H_S', 'G_HA', 'HH_A', 'geom']]
 
+# Infer the schema from the GeoDataFrame
 schema = gpd.io.file.infer_schema(ensym_gdf)
 schema['properties']['HH_D'] = 'date'
 schema['properties']['HH_ZI'] = 'str'
 
-if args._2013:
-    ensym_gdf = ensym_gdf.drop(['HH_EVC', 'BCS', 'LT_CNT'], axis=1)
-    ensym_gdf = ensym_gdf.rename(columns={'G_S': 'G_HA'})
 
 print("=====Final Dataframe====\n\n", ensym_gdf)
 
