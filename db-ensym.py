@@ -33,6 +33,8 @@ parser.add_argument("-s", "--shapefile", default='ensym',
                     \"ensym\" will be used")
 parser.add_argument("-g", "--gainscore", type=float,
                     help="Set the value of the gainscore. Default is \"0.22\"")
+parser.add_argument("-2013", type=bool, default=False, 
+                    help="Generate 2013 Ensym.")
 
 args = parser.parse_args()
 
@@ -174,6 +176,10 @@ ensym_gdf = ensym_gdf[cols]
 schema = gpd.io.file.infer_schema(ensym_gdf)
 schema['properties']['HH_D'] = 'date'
 schema['properties']['HH_ZI'] = 'str'
+
+if args._2013:
+    ensym_gdf = ensym_gdf.drop(['HH_EVC', 'BCS', 'LT_CNT'], axis=1)
+    ensym_gdf = ensym_gdf.rename(columns={'G_S': 'G_HA'})
 
 print("=====Final Dataframe====\n\n", ensym_gdf)
 
