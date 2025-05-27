@@ -1,18 +1,55 @@
-{ description = "db-nvrmap flake";
+{
+  description = "db-nvrmap flake";
 
-	inputs = {
-		nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-	};
+  inputs = {
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+  };
 
-	outputs = { self, nixpkgs, ... }: let
-		pkgs = nixpkgs.legacyPackages."x86_64-linux";
-	in {
-		devShells.x86_64-linux.default = pkgs.mkShell {
+  outputs = { nixpkgs, ... }:
+    let
+      supportedSystems = [ "x86_64-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
+      forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
+      pkgs = forAllSystems (system: nixpkgs.legacyPackages.${system});
+    in
+    {
+      packages = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          default = pkgs.python3.withPackages (pypkgs:
+            with pypkgs; [
+              numpy
+              pandas
+              geopandas
+              sqlalchemy
+              psycopg2
+              openpyxl
+            ]);
+        }
+      );
 
-			packages = [
-				pkgs.python310
-			];
-
-		};
-	};
+      devShells = forAllSystems (
+        system:
+        let
+          pkgs = nixpkgs.legacyPackages.${system};
+        in
+        {
+          default = pkgs.mkShell {
+            buildInputs = [
+              (pkgs.python3.withPackages (pypkgs:
+                with pypkgs; [
+                  numpy
+                  pandas
+                  geopandas
+                  sqlalchemy
+                  psycopg2
+                  openpyxl
+                ]))
+            ];
+          };
+        }
+      );
+    };
 }
