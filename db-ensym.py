@@ -8,8 +8,7 @@ import argparse
 import json
 
 # Define constants
-db_config = ('/home/bhillermann/Documents/Development/Python/db-ensym/'
-             'db_config.json')
+db_config = ('./db_config.json')
 
 # Define the Excel file to import
 evc_data = ('/home/bhillermann/Documents/GIS/Ensym/'
