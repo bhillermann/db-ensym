@@ -1,15 +1,18 @@
 #!/usr/bin/env python
 
-from sqlalchemy import create_engine, text, URL
-from datetime import datetime
-import pandas as pd
-import geopandas as gpd
+import sys 
 import argparse
 import json
+from datetime import datetime
+
+from sqlalchemy import create_engine, text, URL
+import pandas as pd
+import geopandas as gpd
+
 
 # Define constants
-db_config = ('~/Documents/Development/Python/db-ensym/'
-             'db_config.json')
+db_config = ('db_config.json')
+
 
 # Define the Excel file to import
 evc_data = ('~/Documents/GIS/Ensym/'
@@ -86,7 +89,7 @@ bioevc_gdf = gpd.GeoDataFrame.from_postgis(sql=text(sql_query),\
                                            con=engine.connect())
 if bioevc_gdf.empty:
     print("No search results found. Please check your \"View PFI\" values")
-    exit()
+    sys.exit()
 
 # Set the CRS for the GeoDataFrame
 bioevc_gdf = bioevc_gdf.set_crs('epsg:7899')
@@ -97,7 +100,7 @@ try:
     evc_df = pd.read_excel(evc_data)
 except FileNotFoundError as e:
     print("Excel file not found: ", e)
-    exit()
+    sys.exit()
 
 
 # Define the function to generate ensym data
