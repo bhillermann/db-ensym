@@ -9,47 +9,42 @@
     let
       supportedSystems = [ "x86_64-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
-      pkgs = forAllSystems (system: nixpkgs.legacyPackages.${system});
     in
-    {
-      packages = forAllSystems (
-        system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
-        in
-        {
-          default = pkgs.python3.withPackages (pypkgs:
-            with pypkgs; [
-              numpy
-              pandas
-              geopandas
-              sqlalchemy
-              psycopg2
-              openpyxl
-            ]);
-        }
-      );
+    forAllSystems (system:
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
 
-      devShells = forAllSystems (
-        system:
-        let
-          pkgs = nixpkgs.legacyPackages.${system};
-        in
-        {
-          default = pkgs.mkShell {
-            buildInputs = [
-              (pkgs.python3.withPackages (pypkgs:
-                with pypkgs; [
-                  numpy
-                  pandas
-                  geopandas
-                  sqlalchemy
-                  psycopg2
-                  openpyxl
-                ]))
-            ];
-          };
-        }
-      );
-    };
+        pythonEnv = pkgs.python3.withPackages (pypkgs: with pypkgs; [
+          numpy
+          pandas
+          geopandas
+          sqlalchemy
+          psycopg2
+          openpyxl
+        ]);
+      in
+      {
+        packages.default = pkgs.stdenv.mkDerivation {
+          pname = "db-ensym";
+          version = "0.1";
+
+          src = ./.;
+
+          buildInputs = [ pythonEnv ];
+          dontBuild = true;
+
+          installPhase = ''
+            mkdir -p $out/bin
+            cp $src/db-nvrmap.py $out/bin/db-nvrmap
+            cp $src/db-ensym.py $out/bin/db-ensym
+            chmod +x $out/bin/db-nvrmap
+            chmod +x $out/bin/db-ensym
+          '';
+        };
+
+        devShells.default = pkgs.mkShell {
+          buildInputs = [ pythonEnv ];
+        };
+      }
+    );
 }
