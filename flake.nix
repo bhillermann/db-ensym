@@ -8,30 +8,36 @@
   outputs = { nixpkgs, ... }:
     let
       supportedSystems = [ "x86_64-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
-      forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
-    in
-    forAllSystems (system:
-      let
-        pkgs = nixpkgs.legacyPackages.${system};
 
-        pythonEnv = pkgs.python3.withPackages (pypkgs: with pypkgs; [
-          numpy
-          pandas
-          geopandas
-          sqlalchemy
-          psycopg2
-          openpyxl
-        ]);
-      in
-      {
-        packages.default = pkgs.stdenv.mkDerivation {
-          pname = "db-ensym";
-          version = "0.1";
+      forAllSystems = f: 
+	nixpkgs.lib.genAttrs supportedSystems (system: 
+	  let
+	    pkgs = nixpkgs.legacyPackages.${system};
+    
+	    pythonEnv = pkgs.python3.withPackages (p: with p; [
+	      numpy
+	      pandas
+	      geopandas
+	      sqlalchemy
+	      psycopg2
+	      openpyxl
+	    ]);
 
-          src = ./.;
+	  in 
 
-          buildInputs = [ pythonEnv ];
-          dontBuild = true;
+	    f { inherit pkgs pythonEnv system; }
+	);
+
+    in {
+      packages = forAllSystems ({ pkgs, pythonEnv, ... }: { 
+	default = pkgs.stdenv.mkDerivation {
+	  pname = "db-ensym";
+	  version = "0.1";
+
+	  src = ./.;
+
+	  buildInputs = [ pythonEnv ];
+	  dontBuild = true;
 
           installPhase = ''
             mkdir -p $out/bin
@@ -41,10 +47,12 @@
             chmod +x $out/bin/db-ensym
           '';
         };
+      });
 
-        devShells.default = pkgs.mkShell {
-          buildInputs = [ pythonEnv ];
-        };
-      }
-    );
+      devShells = forAllSystems ({ pkgs, pythonEnv, ... }: {
+	default = pkgs.mkShell {
+	  buildInputs = [ pythonEnv ];
+	};
+      });
+    };
 }
