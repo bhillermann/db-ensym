@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import os
 import sys 
 import argparse
 import json
@@ -10,43 +11,54 @@ import pandas as pd
 import geopandas as gpd
 
 
-# Define constants
-db_config = ('db_config.json')
+# Load config directory from env var
+config_dir = os.environ.get("NVRMAP_CONFIG")
+if not config_dir:
+    print("Error: NVRMAP_CONFIG environment variable is not set.")
+    sys.exit(1)
 
+config_path = os.path.join(config_dir, "config.json")
+if not os.path.exists(config_path):
+    print(f"Error: Config file not found at {config_path}")
+    sys.exit(1)
 
-# Define the Excel file to import
-evc_data = ('~/Documents/GIS/Ensym/'
-            'EVC benchmark data - external use.xlsx')
+try:
+    with open(config_path, "r") as f:
+        config = json.load(f)
+except json.JSONDecodeError as e:
+    print(f"Error: Failed to parse {config_path}: {e}")
+    sys.exit(1)
 
-# define the Ensym constants
-project = "Python"
-collector = "Desktop"
-default_gain_score = 0.22
-default_habitat_score = 0.4
+# Extract sections
+db_connection = config.get("db_connection", {})
+evc_data_path = config.get("evc_data")
+ensym_cfg = config.get("ensym", {})
 
-# Call argparse and define the arguments
-parser = argparse.ArgumentParser(description=r'Process View PFIs to an Ensym'
-                                 r' shapefile.')
-parser.add_argument('view_pfi', metavar='N', type=int, nargs='+',
-                    help='PFI of the Parcel View')
-parser.add_argument("-s", "--shapefile", default='ensym',
-                    help="Name of the shapefile to write to.\n If no extention\
-                    is specified then shapefiles will be written to a \
-                    directory instead. If not used, the default folder \
-                    \"ensym\" will be used")
-parser.add_argument("-g", "--gainscore", type=float,
-                    help="Set the value of the gainscore. Default is \"0.22\"")
+# Ensym constants
+project = ensym_cfg.get("project", "Python")
+collector = ensym_cfg.get("collector", "Desktop")
+default_gain_score = ensym_cfg.get("default_gain_score", 0.22)
+default_habitat_score = ensym_cfg.get("default_habitat_score", 0.4)
 
+# Validate required config
+required_db_keys = ["db_type", "username", "password", "host", "database"]
+missing_db_keys = [k for k in required_db_keys if k not in db_connection]
+if missing_db_keys:
+    print(f"Error: Missing DB config keys in {config_path}: {missing_db_keys}")
+    sys.exit(1)
+
+if not evc_data_path or not os.path.exists(os.path.expanduser(evc_data_path)):
+    print(f"Error: EVC data file not found: {evc_data_path}")
+    sys.exit(1)
+
+# CLI args
+parser = argparse.ArgumentParser(description='Process View PFIs to an Ensym shapefile.')
+parser.add_argument('view_pfi', metavar='N', type=int, nargs='+', help='PFI of the Parcel View')
+parser.add_argument("-s", "--shapefile", default='ensym', help="Name of shapefile/directory to write")
+parser.add_argument("-g", "--gainscore", type=float, help="Override gainscore value")
 args = parser.parse_args()
 
-
-# Load the configuration from the JSON file
-with open(db_config, 'r') as config_file:
-    config = json.load(config_file)
-
-db_connection = config.get('db_connection')
-
-# Connect to your postgres DB
+# DB connection
 url_object = URL.create(
     db_connection['db_type'],
     username=db_connection['username'],
@@ -97,7 +109,7 @@ bioevc_gdf = bioevc_gdf.set_crs('epsg:7899')
 # Import the EVC benchmark data with pandas
 # Open the Excel file. Quit if not FileNotFoundError
 try:
-    evc_df = pd.read_excel(evc_data)
+    evc_df = pd.read_excel(evc_data_path)
 except FileNotFoundError as e:
     print("Excel file not found: ", e)
     sys.exit()
@@ -173,4 +185,8 @@ print("=====Final Dataframe====\n\n", ensym_gdf)
 # Write the Ensym shapefile
 print("\n\nWriting shapefile:", args.shapefile)
 #ensym_gdf.to_file(args.shapefile, schema=schema)
-ensym_gdf.to_file(args.shapefile)
+try:
+    ensym_gdf.to_file(args.shapefile)
+except Exception as e:
+    print("Shapefile not writable: ", e)
+    sys.exit()    
