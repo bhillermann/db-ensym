@@ -19,6 +19,7 @@
 	      pandas
 	      geopandas
 	      sqlalchemy
+		  geoalchemy2
 	      psycopg2
 	      openpyxl
 	    ]);
