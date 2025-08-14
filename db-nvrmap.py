@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument('view_pfi', metavar='N', type=int, nargs='+', help="PFI of the Parcel View")
     parser.add_argument("-s", "--shapefile", default='ensym', help="Name of the shapefile/directory to write")
     parser.add_argument("-g", "--gainscore", type=float, help="Override gainscore value")
-    parser.add_argument("-p", "--property", type=bool, help="Use Property View PFIs")
+    parser.add_argument("-p", "--property", action='store_true', help="Use Property View PFIs")
     return parser.parse_args()
 
 def connect_db(db_config: Dict[str, str]) -> Tuple[Any, Dict[str, Any]]:
@@ -63,31 +63,35 @@ def connect_db(db_config: Dict[str, str]) -> Tuple[Any, Dict[str, Any]]:
                            "parcel_property", "parcel_detail", "property_detail"], bind=engine)
     return engine, metadata.tables
 
-def process_view_pfis(pfis, property, parcel_property, parcel_detail, property_detail):
+def process_view_pfis(pfis: List, property, engine, parcel_property, parcel_detail, property_detail) -> List : 
     """Convert parcel view pfis to list of strings or convert property view pfis to parcels pfis"""
     if property:
-        prop_pfi = (
-            select(
-                parcel_property.c.pfi.label("pr_pfi")
-            )
-            .where(property_detail.c.view_pfi.in_(pfis))
+
+        # Step 1: CTE for property_pfi
+        property_pfi_cte = (
+            select(property_detail.c.pfi.label('pr_pfi'))
+            .where(property_detail.c.view_pfi == '4464934')
+            .cte('property_pfi')
         )
 
-        parc_pfi = (
-            select(
-                parcel_property.c.parcel_pfi
-            )
-            .join(prop_pfi, prop_pfi.c.pr_pfi == parcel_property.c.pr_pfi)
+        # Step 2: CTE for parcel_pfi
+        parcel_pfi_cte = (
+            select(parcel_property.c.parcel_pfi)
+            .select_from(parcel_property.join(property_pfi_cte, parcel_property.c.pr_pfi == property_pfi_cte.c.pr_pfi))
+            .cte('parcel_pfi')
         )
 
+        # Step 3: Final select
         parc_view_pfi = (
-            select(
-                parcel_detail.c.view_pfi
-            )
-            .join(parc_pfi, parc_pfi.c.parcel_pfi == parcel_detail.c.pfi)            
+            select(parcel_detail.c.view_pfi)
+            .select_from(parcel_detail.join(parcel_pfi_cte, parcel_detail.c.pfi == parcel_pfi_cte.c.parcel_pfi))
         )
 
-        return list(map(str, parc_view_pfi))
+
+        with engine.connect() as conn:
+            result = conn.execute(parc_view_pfi)
+
+        return [r[0] for r in result]
     else:
         return list(map(str, pfis))
 
@@ -180,7 +184,7 @@ def main() -> None:
     args = parse_args()
     config = load_config()
     engine, tables = connect_db(config["db_connection"])
-    view_pfis = process_view_pfis(args.view_pfi, args.property, tables["parcel_property"], 
+    view_pfis = process_view_pfis(args.view_pfi, args.property, engine, tables["parcel_property"], 
                                   tables["parcel_detail"], tables["property_detail"])
     query = build_query(tables["parcel_view"], tables["nv1750_evc"], tables["bioregions"], view_pfis)
     bioevc_gdf = load_geo_dataframe(engine, query)
@@ -188,7 +192,10 @@ def main() -> None:
     ensym_gdf = build_ensym_gdf(bioevc_gdf, args.view_pfi, config, args)
     logging.info("Final DataFrame: %s", ensym_gdf)
     logging.info("Writing shapefile: %s", args.shapefile)
-    ensym_gdf.to_file(args.shapefile)
+    try:
+        ensym_gdf.to_file(args.shapefile)
+    except Exception as e:
+        print(f"Failed to write to {args.shapefile}: {e}")
 
 if __name__ == "__main__":
     main()
