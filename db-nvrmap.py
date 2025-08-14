@@ -36,10 +36,11 @@ def load_config() -> Dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description='Process View PFIs to an Ensym shapefile.')
-    parser.add_argument('view_pfi', metavar='N', type=int, nargs='+', help='PFI of the Parcel View')
+    parser = argparse.ArgumentParser(description="Process View PFIs to an Ensym shapefile.")
+    parser.add_argument('view_pfi', metavar='N', type=int, nargs='+', help="PFI of the Parcel View")
     parser.add_argument("-s", "--shapefile", default='ensym', help="Name of the shapefile/directory to write")
     parser.add_argument("-g", "--gainscore", type=float, help="Override gainscore value")
+    parser.add_argument("-p", "--property", type=bool, help="Use Property View PFIs")
     return parser.parse_args()
 
 def connect_db(db_config: Dict[str, str]) -> Tuple[Any, Dict[str, Any]]:
@@ -58,8 +59,39 @@ def connect_db(db_config: Dict[str, str]) -> Tuple[Any, Dict[str, Any]]:
     )
     engine = create_engine(url)
     metadata = MetaData()
-    metadata.reflect(only=["parcel_view", "nv1750_evc", "bioregions"], bind=engine)
+    metadata.reflect(only=["parcel_view", "nv1750_evc", "bioregions", 
+                           "parcel_property", "parcel_detail", "property_detail"], bind=engine)
     return engine, metadata.tables
+
+def process_view_pfis(pfis, property, parcel_property, parcel_detail, property_detail):
+    """Convert parcel view pfis to list of strings or convert property view pfis to parcels pfis"""
+    if property:
+        prop_pfi = (
+            select(
+                parcel_property.c.pfi.label("pr_pfi")
+            )
+            .where(property_detail.c.view_pfi.in_(pfis))
+        )
+
+        parc_pfi = (
+            select(
+                parcel_property.c.parcel_pfi
+            )
+            .join(prop_pfi, prop_pfi.c.pr_pfi == parcel_property.c.pr_pfi)
+        )
+
+        parc_view_pfi = (
+            select(
+                parcel_detail.c.view_pfi
+            )
+            .join(parc_pfi, parc_pfi.c.parcel_pfi == parcel_detail.c.pfi)            
+        )
+
+        return list(map(str, parc_view_pfi))
+    else:
+        return list(map(str, pfis))
+
+
 
 def build_query(parcel_view, nv1750_evc, bioregions, pfi_values: List[str]) -> Any:
     """Construct SQL query for spatial data extraction."""
@@ -148,7 +180,9 @@ def main() -> None:
     args = parse_args()
     config = load_config()
     engine, tables = connect_db(config["db_connection"])
-    query = build_query(tables["parcel_view"], tables["nv1750_evc"], tables["bioregions"], list(map(str, args.view_pfi)))
+    view_pfis = process_view_pfis(args.view_pfi, args.property, tables["parcel_property"], 
+                                  tables["parcel_detail"], tables["property_detail"])
+    query = build_query(tables["parcel_view"], tables["nv1750_evc"], tables["bioregions"], view_pfis)
     bioevc_gdf = load_geo_dataframe(engine, query)
     evc_df = load_evc_data(config["evc_data"])
     ensym_gdf = build_ensym_gdf(bioevc_gdf, args.view_pfi, config, args)
