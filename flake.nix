@@ -22,6 +22,7 @@
 		  geoalchemy2
 	      psycopg2
 	      openpyxl
+		  fiona
 	    ]);
 
 	  in 
