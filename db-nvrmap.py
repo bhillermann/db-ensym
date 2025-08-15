@@ -149,7 +149,7 @@ def load_evc_data(path: str) -> pd.DataFrame:
 
 def process_nvrmap_rows(row: pd.Series, view_pfi_list: List[int], count: List[int]) -> Tuple[int, str, str]:
     """Generate site_id, zone_id, and veg_codes for a row."""
-    si = view_pfi_list.index(int(row['view_pfi'])) + 1 if len(view_pfi_list) > 1 else 1
+    si = view_pfi_list.index(row['view_pfi']) + 1 if len(view_pfi_list) > 1 else 1
     count[si - 1] += 1
     zi = chr(ord('@') + count[si - 1]) if count[si - 1] <= 26 else chr(ord('@') + count[si - 1] - 26) * 2
     bioevc = f"{row['bioregcode']}_{str(int(row['evc'])).zfill(4)}" if len(str(row["bioregcode"])) <= 3 else f"{row['bioregcode']}{str(int(row['evc'])).zfill(4)}"
