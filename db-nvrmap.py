@@ -41,7 +41,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("-s", "--shapefile", default='nvrmap', help="Name of the shapefile/directory to write. Default is 'nvrmap'.")
     parser.add_argument("-g", "--gainscore", type=float, help="Override gainscore value")
     parser.add_argument("-p", "--property", action='store_true', help="Use Property View PFIs")
+    parser.add_argument("-e", "--ensym", action='store_true', help="Output in EnSym format")
+    parser.add_argument("-b", "--sbeu", action='store_true', help="Output in 2013 SBEU format")
     return parser.parse_args()
+    
 
 def connect_db(db_config: Dict[str, str]) -> Tuple[Any, Dict[str, Any]]:
     """Connect to the database and reflect required tables."""
@@ -147,16 +150,27 @@ def load_evc_data(path: str) -> pd.DataFrame:
     """Load EVC data from Excel file."""
     return pd.read_excel(Path(path).expanduser())
 
-def process_nvrmap_rows(row: pd.Series, view_pfi_list: List[int], count: List[int]) -> Tuple[int, str, str]:
+def process_nvrmap_rows(row: pd.Series, 
+                        view_pfi_list: List[int], 
+                        count: List[int]
+                        ) -> Tuple[int, str, str]:
     """Generate site_id, zone_id, and veg_codes for a row."""
-    si = view_pfi_list.index(row['view_pfi']) + 1 if len(view_pfi_list) > 1 else 1
+    si = (view_pfi_list.index(row['view_pfi']) 
+          + 1 if len(view_pfi_list) > 1 else 1)
     count[si - 1] += 1
-    zi = chr(ord('@') + count[si - 1]) if count[si - 1] <= 26 else chr(ord('@') + count[si - 1] - 26) * 2
-    bioevc = f"{row['bioregcode']}_{str(int(row['evc'])).zfill(4)}" if len(str(row["bioregcode"])) <= 3 else f"{row['bioregcode']}{str(int(row['evc'])).zfill(4)}"
+    zi = (chr(ord('@') + count[si - 1]) if count[si - 1] 
+          <= 26 else chr(ord('@') + count[si - 1] - 26) * 2)
+    bioevc = (f"{row['bioregcode']}_{str(int(row['evc'])).zfill(4)}" 
+              if len(str(row["bioregcode"])) <= 3 
+              else f"{row['bioregcode']}{str(int(row['evc'])).zfill(4)}")
     return si, zi, bioevc
 
 # Define the function to generate ensym data
-def process_ensym_rows(row: pd.Series, evc_df:pd.DataFrame, view_pfi_list: List[int], count: List[int]) -> Tuple[int, str, str, str]:
+def process_ensym_rows(row: pd.Series, 
+                       evc_df:pd.DataFrame, 
+                       view_pfi_list: List[int], 
+                       count: List[int]
+                       ) -> Tuple[int, str, str, str]:
     """Create the `HH_EVC` values from bioregcod and evc, with padding"""
     bioevc = ""
     if len(str(row["bioregcode"])) <= 3:
@@ -180,8 +194,8 @@ def process_ensym_rows(row: pd.Series, evc_df:pd.DataFrame, view_pfi_list: List[
     
     # Set the correct Site ID if there are multiple parcels
     ## Find the index of the current 'row['view_pfi']' within 'view_pfi_list'
-    si = view_pfi_list.index(int(row['view_pfi']))\
-          + 1 if len(view_pfi_list) > 1 else 1
+    si = (view_pfi_list.index(row['view_pfi'])
+          + 1 if len(view_pfi_list) > 1 else 1)
 
     ## Update the count list
     count[si - 1] += 1
@@ -194,7 +208,12 @@ def process_ensym_rows(row: pd.Series, evc_df:pd.DataFrame, view_pfi_list: List[
             + chr(ord('@') + (count[si - 1]) - 26)
     return si, zi, bioevc, bcs_value
 
-def build_ensym_gdf(input_gdf: gpd.GeoDataFrame, evc_df: pd.DataFrame, view_pfi_list: List[int], config: Dict[str, Any], args: argparse.Namespace) -> gpd.GeoDataFrame:
+def build_ensym_gdf(input_gdf: gpd.GeoDataFrame, 
+                    evc_df: pd.DataFrame, 
+                    view_pfi_list: List[int], 
+                    config: Dict[str, Any], 
+                    args: argparse.Namespace
+                    ) -> gpd.GeoDataFrame:
     """Build the final GeoDataFrame for EnSym output."""
     count = [0] * len(view_pfi_list)
     ensym_gdf = input_gdf.loc[:, ['geom', 'bioregcode', 'evc', 'view_pfi']]
@@ -225,7 +244,11 @@ def build_ensym_gdf(input_gdf: gpd.GeoDataFrame, evc_df: pd.DataFrame, view_pfi_
     ensym_gdf = ensym_gdf[cols]
     return ensym_gdf
 
-def build_nvrmap_gdf(input_gdf: gpd.GeoDataFrame, view_pfi_list: List[int], config: Dict[str, Any], args: argparse.Namespace) -> gpd.GeoDataFrame:
+def build_nvrmap_gdf(input_gdf: gpd.GeoDataFrame, 
+                     view_pfi_list: List[int], 
+                     config: Dict[str, Any], 
+                     args: argparse.Namespace
+                     ) -> gpd.GeoDataFrame:
     """Build the final GeoDataFrame for NVRMap output."""
     count = [0] * len(view_pfi_list)
     gdf = input_gdf.loc[:, ['geom', 'bioregcode', 'evc', 'view_pfi']]
@@ -242,12 +265,33 @@ def build_nvrmap_gdf(input_gdf: gpd.GeoDataFrame, view_pfi_list: List[int], conf
     )
     gdf['lt_count'] = 0
     gdf['cond_score'] = config['attribute_table'].get('default_habitat_score', 0.4)
-    gdf['gain_score'] = args.gainscore if args.gainscore else config['attribute_table'].get('default_gain_score', 0.22)
+    gdf['gain_score'] = (args.gainscore 
+                         if args.gainscore 
+                         else config['attribute_table'].get('default_gain_score', 0.22)
+                         )
     gdf['surv_date'] = datetime.today().strftime('%Y%m%d')
     gdf = gdf.drop(['bioregcode', 'evc', 'view_pfi'], axis=1)
     cols = gdf.columns.tolist()
     gdf = gdf[cols[1:] + cols[:1]]
     return gdf
+
+
+def select_output_gdf(args: argparse.Namespace,
+                      input_gdf: gpd.GeoDataFrame,
+                      evc_df: pd.DataFrame,
+                      view_pfis: List,
+                      config: Dict[str, Any],
+                      ):
+    """Select the correct output format from options"""
+    if args.ensym:
+        logging.info('EnSym output format selected')
+    elif args:sbeu:
+        logging.info('2013 EnSym output format selected')
+    else:
+        logging.info('NVRMap output selected')
+    
+    return output_gdf
+
 
 def main() -> None:
     """Main execution function."""
@@ -258,6 +302,7 @@ def main() -> None:
                                   tables["parcel_detail"], tables["property_detail"])
     query = build_query(tables["parcel_view"], tables["nv1750_evc"], tables["bioregions"], view_pfis)
     input_gdf = load_geo_dataframe(engine, query)
+    test_gdf = select_output_gdf(input_gdf, view_pfis, config, args)
     evc_df = load_evc_data(config["evc_data"])
     output_gdf = build_nvrmap_gdf(input_gdf, view_pfis, config, args)
     logging.info("Final DataFrame: %s", output_gdf)
