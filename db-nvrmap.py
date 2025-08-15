@@ -52,7 +52,7 @@ ENSYM_2017_SCHEMA = {
 NVRMAP_SCHEMA = {
     'geometry': 'Polygon',
     'properties': {
-        'site_id': 'str:2',
+        'site_id': 'int:2',
         'zone_id': 'str:2',
         'prop_id': 'str:50',
         'vlot': 'int',
@@ -331,7 +331,6 @@ def build_nvrmap_gdf(input_gdf: gpd.GeoDataFrame,
                          else config['attribute_table'].get('default_gain_score', 0.22)
                          )
     gdf['surv_date'] = datetime.today().strftime('%Y%m%d')
-    gdf['site_id'] = gdf['site_id'].to_string()
     gdf = gdf.drop(['bioregcode', 'evc', 'view_pfi'], axis=1)
     # Arrange the columns to the schema specification
     gdf = gdf[['site_id', 'zone_id', 'prop_id', 'vlot', 'lot', 'recruits', 'type', 
