@@ -52,13 +52,13 @@ ENSYM_2017_SCHEMA = {
 NVRMAP_SCHEMA = {
     'geometry': 'Polygon',
     'properties': {
-        'HH_D': 'date',
         'site_id': 'str:2',
         'zone_id': 'str:2',
         'prop_id': 'str:50',
         'vlot': 'int',
         'lot': 'int',
         'recruits': 'int',
+        'type': 'str:2',
         'cp' : 'str:50',
         'veg_codes': 'str:10',
         'lt_count': 'int',
@@ -294,6 +294,15 @@ def build_ensym_gdf(input_gdf: gpd.GeoDataFrame,
     cols = cols[+1:] + cols[:+1]
     # Apply the new column order
     ensym_gdf = ensym_gdf[cols]
+
+    # Change columns for 2013 Ensym
+    if args.sbeu:
+        logging.info('Changing to EnSym 2013 format.')
+        ensym_gdf = ensym_gdf.drop(['HH_EVC', 'BCS', 'LT_CNT'], axis=1)
+        ensym_gdf = ensym_gdf.rename(columns={'G_S': 'G_HA'})
+        ensym_gdf = ensym_gdf[['HH_PAI', 'HH_SI', 'HH_ZI', 'HH_VAC', 'HH_CP', 
+                            'HH_D', 'HH_H_S', 'G_HA', 'HH_A', 'geom']]
+
     return ensym_gdf
 
 def build_nvrmap_gdf(input_gdf: gpd.GeoDataFrame, 
@@ -322,9 +331,12 @@ def build_nvrmap_gdf(input_gdf: gpd.GeoDataFrame,
                          else config['attribute_table'].get('default_gain_score', 0.22)
                          )
     gdf['surv_date'] = datetime.today().strftime('%Y%m%d')
+    gdf['site_id'] = gdf['site_id'].to_string()
     gdf = gdf.drop(['bioregcode', 'evc', 'view_pfi'], axis=1)
-    cols = gdf.columns.tolist()
-    gdf = gdf[cols[1:] + cols[:1]]
+    # Arrange the columns to the schema specification
+    gdf = gdf[['site_id', 'zone_id', 'prop_id', 'vlot', 'lot', 'recruits', 'type', 
+               'cp', 'veg_codes', 'lt_count', 'cond_score', 'gain_score', 'surv_date', 'geom']]
+    logging.info(f'NVRMAP Dataframe: \n\n {gdf}')
     return gdf
 
 
@@ -335,10 +347,7 @@ def select_output_gdf(args: argparse.Namespace,
                       config: Dict[str, Any],
                       ) -> gpd.GeoDataFrame:
     """Select the correct output format from options"""
-    if args.sbeu:
-        logging.info('2013 EnSym output format selected')
-        output_gdf = build_ensym_gdf(input_gdf, evc_df, view_pfis, config, args)
-    elif args.ensym:
+    if args.sbeu or args.ensym:
         logging.info('EnSym output format selected')
         output_gdf = build_ensym_gdf(input_gdf, evc_df, view_pfis, config, args)
     else:
@@ -350,7 +359,8 @@ def select_output_gdf(args: argparse.Namespace,
 def write_gdf(output_gdf: gpd.GeoDataFrame,
               args: argparse.Namespace
               ) -> None:
-    logging.info("Final DataFrame: %s", output_gdf)
+    logging.info("Final DataFrame:\n\n %s", output_gdf)
+    logging.info(f'Current columns: {output_gdf.columns.tolist()}')
     logging.info("Writing shapefile: %s", args.shapefile)
     # Set the appropriate schema
     if args.sbeu:
