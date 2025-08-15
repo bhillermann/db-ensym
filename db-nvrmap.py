@@ -118,14 +118,14 @@ def connect_db(db_config: Dict[str, str]) -> Tuple[Any, Dict[str, Any]]:
                            "parcel_property", "parcel_detail", "property_detail"], bind=engine)
     return engine, metadata.tables
 
-def process_view_pfis(pfis: List, property, engine, parcel_property, parcel_detail, property_detail) -> List : 
+def process_view_pfis(args: argparse.Namespace, engine: Any, parcel_property, parcel_detail, property_detail) -> List : 
     """Convert parcel view pfis to list of strings or convert property view pfis to parcels pfis"""
-    if property:
+    if args.property:
 
         # Step 1: CTE for property_pfi
         property_pfi_cte = (
             select(property_detail.c.pfi.label('pr_pfi'))
-            .where(property_detail.c.view_pfi == '4464934')
+            .where(property_detail.c.view_pfi.in_(list(map(str, args.view_pfi))))
             .cte('property_pfi')
         )
 
@@ -148,8 +148,7 @@ def process_view_pfis(pfis: List, property, engine, parcel_property, parcel_deta
 
         return [r[0] for r in result]
     else:
-        return list(map(str, pfis))
-
+        return list(map(str, args.view_pfi))
 
 
 def build_query(parcel_view, nv1750_evc, bioregions, pfi_values: List[str]) -> Any:
@@ -202,6 +201,15 @@ def load_evc_data(path: str) -> pd.DataFrame:
     """Load EVC data from Excel file."""
     return pd.read_excel(Path(path).expanduser())
 
+
+def generate_zone_id(count: List[int], si: int) -> str:
+    """Generate the Zone IDs by changing the number to characters"""
+    if count[si - 1] <= 26:
+        return chr(ord('@') + count[si - 1])
+    else:
+        return chr(ord('@') + count[si - 1] - 26) * 2
+
+
 def process_nvrmap_rows(row: pd.Series, 
                         view_pfi_list: List[int], 
                         count: List[int]
@@ -210,12 +218,13 @@ def process_nvrmap_rows(row: pd.Series,
     si = (view_pfi_list.index(row['view_pfi']) 
           + 1 if len(view_pfi_list) > 1 else 1)
     count[si - 1] += 1
-    zi = (chr(ord('@') + count[si - 1]) if count[si - 1] 
-          <= 26 else chr(ord('@') + count[si - 1] - 26) * 2)
+    ## Change the Zone ID from an integer to alpha
+    zi = generate_zone_id(count, si)
     bioevc = (f"{row['bioregcode']}_{str(int(row['evc'])).zfill(4)}" 
               if len(str(row["bioregcode"])) <= 3 
               else f"{row['bioregcode']}{str(int(row['evc'])).zfill(4)}")
     return si, zi, bioevc
+
 
 # Define the function to generate ensym data
 def process_ensym_rows(row: pd.Series, 
@@ -235,13 +244,13 @@ def process_ensym_rows(row: pd.Series,
             bioevc)].iloc[0, 5]
     except IndexError:
         bcs_value = 'LC'
+
     # Step through conditions as the BCS value isn't present for mosaic EVCs,
     # sub EVCs (like VVP_0055_61) or they are TBC
-    if not bcs_value:
+
+    if not isinstance(bcs_value, str) or not bcs_value or bcs_value == 'TBC':
         bcs_value = 'LC'
-    elif bcs_value == 'TBC':
-        bcs_value = 'LC'
-    elif bcs_value != 'LC':  # All but LC are only 1 letter codes
+    elif bcs_value != 'LC':
         bcs_value = bcs_value[0]
     
     # Set the correct Site ID if there are multiple parcels
@@ -253,11 +262,8 @@ def process_ensym_rows(row: pd.Series,
     count[si - 1] += 1
 
     ## Change the Zone ID from an integer to alpha
-    if count[si - 1] <= 26:
-        zi = chr(ord('@') + count[si - 1])
-    else:
-        zi = chr(ord('@') + (count[si - 1]) - 26)\
-            + chr(ord('@') + (count[si - 1]) - 26)
+    zi = generate_zone_id(count, si)
+
     return si, zi, bioevc, bcs_value
 
 def build_ensym_gdf(input_gdf: gpd.GeoDataFrame, 
@@ -269,9 +275,9 @@ def build_ensym_gdf(input_gdf: gpd.GeoDataFrame,
     """Build the final GeoDataFrame for EnSym output."""
     count = [0] * len(view_pfi_list)
     ensym_gdf = input_gdf.loc[:, ['geom', 'bioregcode', 'evc', 'view_pfi']]
-    ensym_gdf['HH_PAI'] = config['attribute_table'].get('project', 'Python')
+    ensym_gdf['HH_PAI'] = config['attribute_table'].get('project')
     ensym_gdf['HH_D'] = datetime.today().strftime("%Y-%m-%d")
-    ensym_gdf['HH_CP'] = config['attribute_table'].get('collector', 'Desktop')
+    ensym_gdf['HH_CP'] = config['attribute_table'].get('collector')
     ensym_gdf['HH_SI'] = 1
     ensym_gdf['HH_ZI'] = ensym_gdf.index + 1
     ensym_gdf['HH_VAC'] = "P"
@@ -279,12 +285,12 @@ def build_ensym_gdf(input_gdf: gpd.GeoDataFrame,
     ensym_gdf[['HH_SI', 'HH_ZI', 'HH_EVC', 'BCS']] = \
         ensym_gdf.apply(lambda row: process_ensym_rows(row, evc_df, view_pfi_list, count), axis=1, result_type="expand")
     ensym_gdf['LT_CNT'] = 0
-    ensym_gdf['HH_H_S'] = config['attribute_table'].get('default_habitat_score', 0.4)
+    ensym_gdf['HH_H_S'] = config['attribute_table'].get('default_habitat_score')
     # Set the gainscore if specified, otherwise default to 0.22
     if args.gainscore:
         ensym_gdf['G_S'] = args.gainscore
     else:
-        ensym_gdf['G_S'] = config['attribute_table'].get('default_gain_score', 0.22)
+        ensym_gdf['G_S'] = config['attribute_table'].get('default_gain_score')
     # Calculate the area in hecatres
     ensym_gdf['HH_A'] = ensym_gdf['geom'].area / 10000
     # Drop the extra columns
@@ -315,20 +321,20 @@ def build_nvrmap_gdf(input_gdf: gpd.GeoDataFrame,
     gdf = input_gdf.loc[:, ['geom', 'bioregcode', 'evc', 'view_pfi']]
     gdf['site_id'] = 1
     gdf['zone_id'] = gdf.index + 1
-    gdf['prop_id'] = config['attribute_table'].get('project', 'Python')
+    gdf['prop_id'] = config['attribute_table'].get('project')
     gdf['vlot'] = 0
     gdf['lot'] = 0
     gdf['recruits'] = 0
     gdf['type'] = "p"
-    gdf['cp'] = config['attribute_table'].get('collector', 'Desktop')
+    gdf['cp'] = config['attribute_table'].get('collector')
     gdf[['site_id', 'zone_id', 'veg_codes']] = gdf.apply(
         lambda row: process_nvrmap_rows(row, view_pfi_list, count), axis=1, result_type="expand"
     )
     gdf['lt_count'] = 0
-    gdf['cond_score'] = config['attribute_table'].get('default_habitat_score', 0.4)
+    gdf['cond_score'] = config['attribute_table'].get('default_habitat_score')
     gdf['gain_score'] = (args.gainscore 
                          if args.gainscore 
-                         else config['attribute_table'].get('default_gain_score', 0.22)
+                         else config['attribute_table'].get('default_gain_score')
                          )
     gdf['surv_date'] = datetime.today().strftime('%Y%m%d')
     gdf = gdf.drop(['bioregcode', 'evc', 'view_pfi'], axis=1)
@@ -380,7 +386,7 @@ def main() -> None:
     args = parse_args()
     config = load_config()
     engine, tables = connect_db(config["db_connection"])
-    view_pfis = process_view_pfis(args.view_pfi, args.property, engine, tables["parcel_property"], 
+    view_pfis = process_view_pfis(args, engine, tables["parcel_property"], 
                                   tables["parcel_detail"], tables["property_detail"])
     query = build_query(tables["parcel_view"], tables["nv1750_evc"], tables["bioregions"], view_pfis)
     input_gdf = load_geo_dataframe(engine, query)
