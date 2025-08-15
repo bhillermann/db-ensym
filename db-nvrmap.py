@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import io
 import sys
 import json
 import argparse
@@ -17,6 +18,57 @@ from geoalchemy2 import Geometry
 
 # Constants
 DEFAULT_CRS = 'epsg:7899'
+ENSYM_2013_SCHEMA = {
+    'geometry': 'Polygon',
+    'properties': {
+        'HH_PAI': 'str:11',
+        'HH_SI': 'int:2',
+        'HH_ZI': 'str:2',
+        'HH_VAC': 'str:2',
+        'HH_CP' : 'str:50',
+        'HH_D': 'date',
+        'HH_H_S': 'float:3.2',
+        'G_HA': 'float:5.4',
+        'HH_A': 'float:10.4'
+    }
+}
+ENSYM_2017_SCHEMA = {
+    'geometry': 'Polygon',
+    'properties': {
+        'HH_PAI': 'str:11',
+        'HH_D': 'date',
+        'HH_CP' : 'str:50',
+        'HH_SI': 'int:2',
+        'HH_ZI': 'str:2',
+        'HH_VAC': 'str:2',
+        'HH_EVC': 'str:10',
+        'BCS': 'str:2',
+        'LT_CNT': 'int:5',
+        'HH_H_S': 'float:3.2',
+        'G_S': 'float:5.4',
+        'HH_A': 'float:10.4'
+    }
+}
+NVRMAP_SCHEMA = {
+    'geometry': 'Polygon',
+    'properties': {
+        'HH_D': 'date',
+        'site_id': 'str:2',
+        'zone_id': 'str:2',
+        'prop_id': 'str:50',
+        'vlot': 'int',
+        'lot': 'int',
+        'recruits': 'int',
+        'cp' : 'str:50',
+        'veg_codes': 'str:10',
+        'lt_count': 'int',
+        'cond_score': 'float:3.2',
+        'gain_score': 'float:5.4',
+        'surv_date': 'int'
+    }
+}
+
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -218,7 +270,7 @@ def build_ensym_gdf(input_gdf: gpd.GeoDataFrame,
     count = [0] * len(view_pfi_list)
     ensym_gdf = input_gdf.loc[:, ['geom', 'bioregcode', 'evc', 'view_pfi']]
     ensym_gdf['HH_PAI'] = config['attribute_table'].get('project', 'Python')
-    ensym_gdf['HH_D'] = datetime.today()
+    ensym_gdf['HH_D'] = datetime.today().strftime("%Y-%m-%d")
     ensym_gdf['HH_CP'] = config['attribute_table'].get('collector', 'Desktop')
     ensym_gdf['HH_SI'] = 1
     ensym_gdf['HH_ZI'] = ensym_gdf.index + 1
@@ -281,16 +333,37 @@ def select_output_gdf(args: argparse.Namespace,
                       evc_df: pd.DataFrame,
                       view_pfis: List,
                       config: Dict[str, Any],
-                      ):
+                      ) -> gpd.GeoDataFrame:
     """Select the correct output format from options"""
-    if args.ensym:
-        logging.info('EnSym output format selected')
-    elif args:sbeu:
+    if args.sbeu:
         logging.info('2013 EnSym output format selected')
+        output_gdf = build_ensym_gdf(input_gdf, evc_df, view_pfis, config, args)
+    elif args.ensym:
+        logging.info('EnSym output format selected')
+        output_gdf = build_ensym_gdf(input_gdf, evc_df, view_pfis, config, args)
     else:
         logging.info('NVRMap output selected')
+        output_gdf = build_nvrmap_gdf(input_gdf, view_pfis, config, args)
     
     return output_gdf
+
+def write_gdf(output_gdf: gpd.GeoDataFrame,
+              args: argparse.Namespace
+              ) -> None:
+    logging.info("Final DataFrame: %s", output_gdf)
+    logging.info("Writing shapefile: %s", args.shapefile)
+    # Set the appropriate schema
+    if args.sbeu:
+        schema = ENSYM_2013_SCHEMA
+    elif args.ensym:
+        schema = ENSYM_2017_SCHEMA
+    else:
+        schema = NVRMAP_SCHEMA
+
+    try:
+        output_gdf.to_file(args.shapefile, schema=schema, engine='fiona')
+    except Exception as e:
+        print(f"Failed to write to {args.shapefile}: {e}")
 
 
 def main() -> None:
@@ -302,15 +375,9 @@ def main() -> None:
                                   tables["parcel_detail"], tables["property_detail"])
     query = build_query(tables["parcel_view"], tables["nv1750_evc"], tables["bioregions"], view_pfis)
     input_gdf = load_geo_dataframe(engine, query)
-    test_gdf = select_output_gdf(input_gdf, view_pfis, config, args)
     evc_df = load_evc_data(config["evc_data"])
-    output_gdf = build_nvrmap_gdf(input_gdf, view_pfis, config, args)
-    logging.info("Final DataFrame: %s", output_gdf)
-    logging.info("Writing shapefile: %s", args.shapefile)
-    try:
-        output_gdf.to_file(args.shapefile)
-    except Exception as e:
-        print(f"Failed to write to {args.shapefile}: {e}")
+    output_gdf = select_output_gdf(args, input_gdf, evc_df, view_pfis, config)
+    write_gdf(output_gdf, args)
 
 if __name__ == "__main__":
     main()
