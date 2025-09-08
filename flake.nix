@@ -34,7 +34,7 @@
       packages = forAllSystems ({ pkgs, pythonEnv, ... }: { 
 	default = pkgs.stdenv.mkDerivation {
 	  pname = "db-ensym";
-	  version = "0.1";
+	  version = "0.9";
 
 	  src = ./.;
 
@@ -44,9 +44,7 @@
           installPhase = ''
             mkdir -p $out/bin
             cp $src/db-nvrmap.py $out/bin/db-nvrmap
-            cp $src/db-ensym.py $out/bin/db-ensym
             chmod +x $out/bin/db-nvrmap
-            chmod +x $out/bin/db-ensym
           '';
         };
       });
