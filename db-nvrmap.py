@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 
 import os
-import io
-import sys
 import json
 import argparse
 import logging
