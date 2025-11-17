@@ -34,7 +34,7 @@
       packages = forAllSystems ({ pkgs, pythonEnv, ... }: { 
 	default = pkgs.stdenv.mkDerivation {
 	  pname = "db-ensym";
-	  version = "0.9";
+	  # version = "0.9";
 
 	  src = ./.;
 
