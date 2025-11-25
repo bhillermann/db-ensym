@@ -19,10 +19,10 @@
 	      pandas
 	      geopandas
 	      sqlalchemy
-		  geoalchemy2
+	      geoalchemy2
 	      psycopg2
 	      openpyxl
-		  fiona
+	      fiona
 	    ]);
 
 	  in 
@@ -34,7 +34,7 @@
       packages = forAllSystems ({ pkgs, pythonEnv, ... }: { 
 	default = pkgs.stdenv.mkDerivation {
 	  pname = "db-ensym";
-	  # version = "0.9";
+	  version = "1.1";
 
 	  src = ./.;
 
