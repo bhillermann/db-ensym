@@ -10,12 +10,14 @@ from pathlib import Path
 
 import pandas as pd
 import geopandas as gpd
-from sqlalchemy import create_engine, select, func, MetaData
+from sqlalchemy import create_engine, select, func, MetaData, cast
 from sqlalchemy.engine.url import URL
 from geoalchemy2 import Geometry
 
 # Constants
 DEFAULT_CRS = 'epsg:7899'
+PARCEL_BUFFER_METERS = -6  # Negative buffer to shrink parcel geometry inward
+SQ_METERS_PER_HECTARE = 10000  # Conversion factor for area calculations
 ENSYM_2013_SCHEMA = {
     'geometry': 'Polygon',
     'properties': {
@@ -71,18 +73,110 @@ NVRMAP_SCHEMA = {
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
+def load_db_config_from_env() -> Dict[str, str]:
+    """Load database configuration from environment variables.
+
+    Reads the following environment variables:
+    - NVRMAP_DB_TYPE: Database type (e.g., 'postgresql+psycopg2')
+    - NVRMAP_DB_USER: Database username
+    - NVRMAP_DB_PASSWORD: Database password
+    - NVRMAP_DB_HOST: Database host
+    - NVRMAP_DB_NAME: Database name
+
+    Returns:
+        Dict[str, str]: Dictionary with database configuration keys that were found
+                       in environment variables. Keys map to config.json format:
+                       db_type, username, password, host, database
+    """
+    env_to_config_map = {
+        'NVRMAP_DB_TYPE': 'db_type',
+        'NVRMAP_DB_USER': 'username',
+        'NVRMAP_DB_PASSWORD': 'password',
+        'NVRMAP_DB_HOST': 'host',
+        'NVRMAP_DB_NAME': 'database'
+    }
+
+    db_config = {}
+    for env_var, config_key in env_to_config_map.items():
+        value = os.environ.get(env_var, '').strip()
+        if value:
+            db_config[config_key] = value
+
+    return db_config
+
 def load_config() -> Dict[str, Any]:
-    """Load configuration from the NVRMAP_CONFIG environment variable."""
+    """Load configuration from environment variables and config file.
+
+    Configuration priority (highest to lowest):
+    1. Environment variables (NVRMAP_DB_* for database connection)
+    2. Config file ($NVRMAP_CONFIG/config.json)
+
+    Database environment variables:
+    - NVRMAP_DB_TYPE: Database type (e.g., 'postgresql+psycopg2')
+    - NVRMAP_DB_USER: Database username
+    - NVRMAP_DB_PASSWORD: Database password
+    - NVRMAP_DB_HOST: Database host
+    - NVRMAP_DB_NAME: Database name
+
+    The config file is optional if all database environment variables are provided.
+    Environment variables can partially override config file values.
+
+    Returns:
+        Dict[str, Any]: Complete configuration dictionary
+
+    Raises:
+        EnvironmentError: If required configuration is missing from both sources
+    """
+    # Load database config from environment variables first
+    db_config_from_env = load_db_config_from_env()
+
+    # Try to load config file
     config_dir = os.environ.get("NVRMAP_CONFIG")
-    if not config_dir:
-        raise EnvironmentError("NVRMAP_CONFIG environment variable is not set.")
-    
-    config_path = Path(config_dir) / "config.json"
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found at {config_path}")
-    
-    with config_path.open("r") as f:
-        return json.load(f)
+    config_from_file = {}
+
+    if config_dir:
+        config_path = Path(config_dir) / "config.json"
+        if config_path.exists():
+            with config_path.open("r") as f:
+                config_from_file = json.load(f)
+
+    # Check if we have enough configuration
+    # We need either: all DB env vars OR a config file OR a combination
+    required_db_keys = ["db_type", "username", "password", "host", "database"]
+
+    # Merge configurations: start with file config, override with env vars
+    # Note: Environment variables take precedence over config file values
+    if config_from_file:
+        final_config = config_from_file.copy()
+        # Override db_connection values with environment variables
+        if 'db_connection' in final_config:
+            final_config['db_connection'].update(db_config_from_env)
+        else:
+            final_config['db_connection'] = db_config_from_env
+    else:
+        # No config file, must have all DB vars from environment
+        if all(key in db_config_from_env for key in required_db_keys):
+            final_config = {'db_connection': db_config_from_env}
+        else:
+            raise EnvironmentError(
+                "NVRMAP_CONFIG environment variable is not set or config file not found, "
+                "and not all database environment variables are provided. "
+                "Either provide a config file or set all of: "
+                "NVRMAP_DB_TYPE, NVRMAP_DB_USER, NVRMAP_DB_PASSWORD, NVRMAP_DB_HOST, NVRMAP_DB_NAME"
+            )
+
+    # Validate that we have all required database connection keys
+    if 'db_connection' not in final_config:
+        raise EnvironmentError("Database connection configuration is missing")
+
+    missing_keys = [k for k in required_db_keys if k not in final_config['db_connection']]
+    if missing_keys:
+        raise EnvironmentError(
+            f"Missing required database configuration keys: {missing_keys}. "
+            "Provide them via environment variables (NVRMAP_DB_*) or config file."
+        )
+
+    return final_config
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -97,12 +191,33 @@ def parse_args() -> argparse.Namespace:
     
 
 def connect_db(db_config: Dict[str, str]) -> Tuple[Any, Dict[str, Any]]:
-    """Connect to the database and reflect required tables."""
+    """Connect to the database and reflect required tables.
+
+    Args:
+        db_config: Dictionary containing database connection parameters
+
+    Returns:
+        Tuple of (SQLAlchemy engine, dictionary of reflected tables)
+
+    Raises:
+        KeyError: If required keys are missing from db_config
+        ValueError: If any required config value is empty or whitespace
+    """
     required_keys = ["db_type", "username", "password", "host", "database"]
+
+    # Check for missing keys
     missing_keys = [k for k in required_keys if k not in db_config]
     if missing_keys:
         raise KeyError(f"Missing DB config keys: {missing_keys}")
-    
+
+    # Check for empty/whitespace values
+    empty_keys = [k for k in required_keys if not str(db_config[k]).strip()]
+    if empty_keys:
+        raise ValueError(
+            f"Database config values cannot be empty: {empty_keys}. "
+            "Provide valid values via environment variables (NVRMAP_DB_*) or config file."
+        )
+
     url = URL.create(
         db_config["db_type"],
         username=db_config["username"],
@@ -112,7 +227,7 @@ def connect_db(db_config: Dict[str, str]) -> Tuple[Any, Dict[str, Any]]:
     )
     engine = create_engine(url)
     metadata = MetaData()
-    metadata.reflect(only=["parcel_view", "nv1750_evc", "bioregions", 
+    metadata.reflect(only=["parcel_view", "nv1750_evc", "bioregions",
                            "parcel_property", "parcel_detail", "property_detail"], bind=engine)
     return engine, metadata.tables
 
@@ -150,13 +265,34 @@ def process_view_pfis(args: argparse.Namespace, engine: Any, parcel_property, pa
 
 
 def build_query(parcel_view, nv1750_evc, bioregions, pfi_values: List[str]) -> Any:
-    """Construct SQL query for spatial data extraction."""
-    clipped_geom = func.ST_Dump(
-        func.ST_Intersection(
-            func.ST_Buffer(parcel_view.c.geom, -6),
-            nv1750_evc.c.geom
-        )
-    ).geom
+    """Construct SQL query for spatial data extraction.
+
+    This function builds a complex spatial query that:
+    1. Buffers parcel geometries inward by PARCEL_BUFFER_METERS
+    2. Intersects buffered parcels with EVC (Ecological Vegetation Class) layer
+    3. Uses ST_Dump to convert any multi-part geometries to single parts
+    4. Further intersects with bioregions layer for classification
+
+    Args:
+        parcel_view: SQLAlchemy table for parcel_view
+        nv1750_evc: SQLAlchemy table for nv1750_evc (vegetation)
+        bioregions: SQLAlchemy table for bioregions
+        pfi_values: List of parcel PFI (Property Feature Identifier) values to process
+
+    Returns:
+        SQLAlchemy select statement ready for execution
+    """
+    # ST_Dump returns a composite type (geometry_dump) with a geom field
+    # We extract the geometry using cast to convert the composite field access
+    clipped_geom = cast(
+        func.ST_Dump(
+            func.ST_Intersection(
+                func.ST_Buffer(parcel_view.c.geom, PARCEL_BUFFER_METERS),
+                nv1750_evc.c.geom
+            )
+        ).geom,
+        Geometry
+    )
 
     clipped_subq = (
         select(
@@ -170,7 +306,13 @@ def build_query(parcel_view, nv1750_evc, bioregions, pfi_values: List[str]) -> A
         .subquery("clipped")
     )
 
-    outer_geom = func.ST_Dump(func.ST_Intersection(clipped_subq.c.geom, bioregions.c.geom)).geom
+    # Second ST_Dump for intersection with bioregions
+    outer_geom = cast(
+        func.ST_Dump(
+            func.ST_Intersection(clipped_subq.c.geom, bioregions.c.geom)
+        ).geom,
+        Geometry
+    )
 
     bio_clipped_subq = (
         select(
@@ -201,81 +343,162 @@ def load_evc_data(path: str) -> pd.DataFrame:
 
 
 def generate_zone_id(count: List[int], si: int) -> str:
-    """Generate the Zone IDs by changing the number to characters"""
-    if count[si - 1] <= 26:
-        return chr(ord('@') + count[si - 1])
+    """Generate Zone IDs by converting count to letters (A-Z, then AA, AB, etc.)."""
+    counter = count[si - 1]
+    if counter <= 26:
+        return chr(ord('@') + counter)
     else:
-        return chr(ord('@') + count[si - 1] - 26) * 2
+        # Base-26 conversion for counts > 26
+        counter -= 1  # Make 0-indexed for calculation
+        first_letter = chr(ord('A') + (counter // 26) - 1)
+        second_letter = chr(ord('A') + (counter % 26))
+        return first_letter + second_letter
 
 
-def process_nvrmap_rows(row: pd.Series, 
-                        view_pfi_list: List[int], 
+def format_bioevc(bioregcode: str, evc: int) -> str:
+    """Format bioregion code and EVC into combined identifier.
+
+    Adds underscore separator for bioregcodes <= 3 chars.
+
+    Args:
+        bioregcode: Bioregion code (e.g., 'VVP', 'STIF')
+        evc: Ecological Vegetation Class number
+
+    Returns:
+        str: Formatted bioregion-EVC identifier (e.g., 'VVP_0055' or 'STIF0055')
+    """
+    evc_padded = str(int(evc)).zfill(4)
+    if len(bioregcode) <= 3:
+        return f"{bioregcode}_{evc_padded}"
+    return f"{bioregcode}{evc_padded}"
+
+
+def calculate_site_id(view_pfi_list: List[str], view_pfi: str) -> int:
+    """Calculate site ID based on position in view PFI list.
+
+    Args:
+        view_pfi_list: List of all view PFI values being processed
+        view_pfi: Current view PFI to find in the list
+
+    Returns:
+        int: Site ID (1-based index), or 1 if only one PFI in list
+    """
+    if len(view_pfi_list) > 1:
+        try:
+            return view_pfi_list.index(view_pfi) + 1
+        except ValueError:
+            logging.warning(f"View PFI {view_pfi} not found in list, defaulting to 1")
+            return 1
+    return 1
+
+
+def lookup_bcs_value(bioevc: str, evc_df: pd.DataFrame) -> str:
+    """Look up BCS (Bioregional Conservation Status) value for a bioevc code.
+
+    Searches for the bioevc code in the EVC DataFrame and returns the BCS category.
+    Handles missing values, invalid data types, and placeholder values ('TBC').
+
+    Args:
+        bioevc: Combined bioregion/EVC code (e.g., 'VVP_0055')
+        evc_df: DataFrame containing EVC data with BIOEVCCODE column
+
+    Returns:
+        str: BCS value ('E', 'V', 'D', 'R', 'N', 'LC') or 'LC' if not found/invalid
+             For values other than 'LC', returns only the first character.
+    """
+    try:
+        bcs_value = evc_df[evc_df['BIOEVCCODE'].str.contains(bioevc)]['BCS_CATEGORY'].iloc[0]
+    except IndexError:
+        logging.warning(f"BCS value not found for {bioevc}, defaulting to 'LC'")
+        return 'LC'
+
+    # Handle invalid BCS values (not string, empty, or 'TBC')
+    if not isinstance(bcs_value, str) or not bcs_value.strip() or bcs_value.strip() == 'TBC':
+        return 'LC'
+    elif bcs_value != 'LC':
+        return bcs_value[0]  # Return first character only
+    return bcs_value
+
+
+def move_column_to_end(gdf: gpd.GeoDataFrame, column: str) -> gpd.GeoDataFrame:
+    """Move specified column to end of DataFrame.
+
+    Args:
+        gdf: GeoDataFrame to reorder
+        column: Name of column to move to end
+
+    Returns:
+        GeoDataFrame with column moved to end
+
+    Raises:
+        KeyError: If column does not exist in GeoDataFrame
+    """
+    if column not in gdf.columns:
+        raise KeyError(f"Column '{column}' not found in GeoDataFrame")
+    cols = [c for c in gdf.columns if c != column] + [column]
+    return gdf[cols]
+
+
+def get_attribute(config: Dict[str, Any], key: str, default: Any = None) -> Any:
+    """Get value from attribute_table config section.
+
+    Args:
+        config: Full configuration dictionary
+        key: Key to retrieve from attribute_table
+        default: Default value if key not found
+
+    Returns:
+        Value from config or default
+    """
+    return config.get('attribute_table', {}).get(key, default)
+
+
+def process_nvrmap_rows(row: pd.Series,
+                        view_pfi_list: List[str],
                         count: List[int]
                         ) -> Tuple[int, str, str]:
     """Generate site_id, zone_id, and veg_codes for a row."""
-    si = (view_pfi_list.index(row['view_pfi']) 
-          + 1 if len(view_pfi_list) > 1 else 1)
+    si = calculate_site_id(view_pfi_list, row['view_pfi'])
     count[si - 1] += 1
-    ## Change the Zone ID from an integer to alpha
+    # Change the Zone ID from an integer to alpha
     zi = generate_zone_id(count, si)
-    bioevc = (f"{row['bioregcode']}_{str(int(row['evc'])).zfill(4)}" 
-              if len(str(row["bioregcode"])) <= 3 
-              else f"{row['bioregcode']}{str(int(row['evc'])).zfill(4)}")
+    bioevc = format_bioevc(row['bioregcode'], row['evc'])
     return si, zi, bioevc
 
 
 # Define the function to generate ensym data
-def process_ensym_rows(row: pd.Series, 
-                       evc_df:pd.DataFrame, 
-                       view_pfi_list: List[int], 
+def process_ensym_rows(row: pd.Series,
+                       evc_df:pd.DataFrame,
+                       view_pfi_list: List[str],
                        count: List[int]
                        ) -> Tuple[int, str, str, str]:
     """Create the `HH_EVC` values from bioregcod and evc, with padding"""
-    bioevc = ""
-    if len(str(row["bioregcode"])) <= 3:
-        bioevc = row["bioregcode"] + "_" + str(int(row["evc"])).zfill(4)
-    if len(str(row["bioregcode"])) == 4:
-        bioevc = row["bioregcode"] + str(int(row["evc"])).zfill(4)
-    # Search for `bioevc` as sometimes there are sub evcs. Choose the 1st one
-    try:
-        bcs_value = evc_df[evc_df['BIOEVCCODE'].str.contains(
-            bioevc)].iloc[0, 5]
-    except IndexError:
-        bcs_value = 'LC'
+    bioevc = format_bioevc(row['bioregcode'], row['evc'])
+    bcs_value = lookup_bcs_value(bioevc, evc_df)
 
-    # Step through conditions as the BCS value isn't present for mosaic EVCs,
-    # sub EVCs (like VVP_0055_61) or they are TBC
-
-    if not isinstance(bcs_value, str) or not bcs_value or bcs_value == 'TBC':
-        bcs_value = 'LC'
-    elif bcs_value != 'LC':
-        bcs_value = bcs_value[0]
-    
     # Set the correct Site ID if there are multiple parcels
-    ## Find the index of the current 'row['view_pfi']' within 'view_pfi_list'
-    si = (view_pfi_list.index(row['view_pfi'])
-          + 1 if len(view_pfi_list) > 1 else 1)
+    si = calculate_site_id(view_pfi_list, row['view_pfi'])
 
-    ## Update the count list
+    # Update the count list
     count[si - 1] += 1
 
-    ## Change the Zone ID from an integer to alpha
+    # Change the Zone ID from an integer to alpha
     zi = generate_zone_id(count, si)
 
     return si, zi, bioevc, bcs_value
 
-def build_ensym_gdf(input_gdf: gpd.GeoDataFrame, 
-                    evc_df: pd.DataFrame, 
-                    view_pfi_list: List[int], 
-                    config: Dict[str, Any], 
+def build_ensym_gdf(input_gdf: gpd.GeoDataFrame,
+                    evc_df: pd.DataFrame,
+                    view_pfi_list: List[str],
+                    config: Dict[str, Any],
                     args: argparse.Namespace
                     ) -> gpd.GeoDataFrame:
     """Build the final GeoDataFrame for EnSym output."""
     count = [0] * len(view_pfi_list)
     ensym_gdf = input_gdf.loc[:, ['geom', 'bioregcode', 'evc', 'view_pfi']]
-    ensym_gdf['HH_PAI'] = config['attribute_table'].get('project')
+    ensym_gdf['HH_PAI'] = get_attribute(config, 'project')
     ensym_gdf['HH_D'] = datetime.today().strftime("%Y-%m-%d")
-    ensym_gdf['HH_CP'] = config['attribute_table'].get('collector')
+    ensym_gdf['HH_CP'] = get_attribute(config, 'collector')
     ensym_gdf['HH_SI'] = 1
     ensym_gdf['HH_ZI'] = ensym_gdf.index + 1
     ensym_gdf['HH_VAC'] = "P"
@@ -283,21 +506,18 @@ def build_ensym_gdf(input_gdf: gpd.GeoDataFrame,
     ensym_gdf[['HH_SI', 'HH_ZI', 'HH_EVC', 'BCS']] = \
         ensym_gdf.apply(lambda row: process_ensym_rows(row, evc_df, view_pfi_list, count), axis=1, result_type="expand")
     ensym_gdf['LT_CNT'] = 0
-    ensym_gdf['HH_H_S'] = config['attribute_table'].get('default_habitat_score')
+    ensym_gdf['HH_H_S'] = get_attribute(config, 'default_habitat_score')
     # Set the gainscore if specified, otherwise default to 0.22
     if args.gainscore:
         ensym_gdf['G_S'] = args.gainscore
     else:
-        ensym_gdf['G_S'] = config['attribute_table'].get('default_gain_score')
-    # Calculate the area in hecatres
-    ensym_gdf['HH_A'] = ensym_gdf['geom'].area / 10000
+        ensym_gdf['G_S'] = get_attribute(config, 'default_gain_score')
+    # Calculate the area in hectares
+    ensym_gdf['HH_A'] = ensym_gdf['geom'].area / SQ_METERS_PER_HECTARE
     # Drop the extra columns
     ensym_gdf = ensym_gdf.drop(['bioregcode', 'evc', 'view_pfi'], axis=1)
-    # Sort the columns to put 'geom' last
-    cols = ensym_gdf.columns.tolist()
-    cols = cols[+1:] + cols[:+1]
-    # Apply the new column order
-    ensym_gdf = ensym_gdf[cols]
+    # Move 'geom' column to end
+    ensym_gdf = move_column_to_end(ensym_gdf, 'geom')
 
     # Change columns for 2013 Ensym
     if args.sbeu:
@@ -309,9 +529,9 @@ def build_ensym_gdf(input_gdf: gpd.GeoDataFrame,
 
     return ensym_gdf
 
-def build_nvrmap_gdf(input_gdf: gpd.GeoDataFrame, 
-                     view_pfi_list: List[int], 
-                     config: Dict[str, Any], 
+def build_nvrmap_gdf(input_gdf: gpd.GeoDataFrame,
+                     view_pfi_list: List[str],
+                     config: Dict[str, Any],
                      args: argparse.Namespace
                      ) -> gpd.GeoDataFrame:
     """Build the final GeoDataFrame for NVRMap output."""
@@ -319,20 +539,20 @@ def build_nvrmap_gdf(input_gdf: gpd.GeoDataFrame,
     gdf = input_gdf.loc[:, ['geom', 'bioregcode', 'evc', 'view_pfi']]
     gdf['site_id'] = 1
     gdf['zone_id'] = gdf.index + 1
-    gdf['prop_id'] = config['attribute_table'].get('project')
+    gdf['prop_id'] = get_attribute(config, 'project')
     gdf['vlot'] = 0
     gdf['lot'] = 0
     gdf['recruits'] = 0
     gdf['type'] = "p"
-    gdf['cp'] = config['attribute_table'].get('collector')
+    gdf['cp'] = get_attribute(config, 'collector')
     gdf[['site_id', 'zone_id', 'veg_codes']] = gdf.apply(
         lambda row: process_nvrmap_rows(row, view_pfi_list, count), axis=1, result_type="expand"
     )
     gdf['lt_count'] = 0
-    gdf['cond_score'] = config['attribute_table'].get('default_habitat_score')
-    gdf['gain_score'] = (args.gainscore 
-                         if args.gainscore 
-                         else config['attribute_table'].get('default_gain_score')
+    gdf['cond_score'] = get_attribute(config, 'default_habitat_score')
+    gdf['gain_score'] = (args.gainscore
+                         if args.gainscore
+                         else get_attribute(config, 'default_gain_score')
                          )
     gdf['surv_date'] = datetime.today().strftime('%Y%m%d')
     gdf = gdf.drop(['bioregcode', 'evc', 'view_pfi'], axis=1)
@@ -362,9 +582,20 @@ def select_output_gdf(args: argparse.Namespace,
 def write_gdf(output_gdf: gpd.GeoDataFrame,
               args: argparse.Namespace
               ) -> None:
+    """Write GeoDataFrame to shapefile with appropriate schema.
+
+    Args:
+        output_gdf: GeoDataFrame to write
+        args: Command-line arguments containing shapefile path and format flags
+
+    Raises:
+        IOError: If unable to write shapefile to specified path
+        OSError: If file system error occurs during write
+    """
     logging.info("Final DataFrame:\n\n %s", output_gdf)
     logging.info(f'Current columns: {output_gdf.columns.tolist()}')
     logging.info("Writing shapefile: %s", args.shapefile)
+
     # Set the appropriate schema
     if args.sbeu:
         schema = ENSYM_2013_SCHEMA
@@ -375,8 +606,9 @@ def write_gdf(output_gdf: gpd.GeoDataFrame,
 
     try:
         output_gdf.to_file(args.shapefile, schema=schema, engine='fiona')
-    except Exception as e:
-        print(f"Failed to write to {args.shapefile}: {e}")
+    except (IOError, OSError) as e:
+        logging.error(f"Failed to write shapefile {args.shapefile}: {e}")
+        raise
 
 
 def main() -> None:
