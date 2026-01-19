@@ -2,3 +2,5 @@ db_config.json
 .envrc
 .direnv
 .vscode
+__pycache__/
+*.pyc
