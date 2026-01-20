@@ -5,8 +5,7 @@
 
   outputs = { nixpkgs, ... }:
     let
-      configFilePath =
-        "./config.json";
+      configFilePath = ".";
       secretPath =
         "$HOME/.config/opnix/secrets/postgisPassword"; # location of file containing the database password
       supportedSystems =
