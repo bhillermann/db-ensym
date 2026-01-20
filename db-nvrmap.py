@@ -104,11 +104,64 @@ def load_db_config_from_env() -> Dict[str, str]:
 
     return db_config
 
+
+def load_config_from_env() -> Dict[str, Any]:
+    """Load non-database configuration from environment variables.
+
+    Reads the following environment variables:
+    - NVRMAP_EVC_DATA: Path to EVC data Excel file
+    - NVRMAP_PROJECT: Project identifier for attribute_table
+    - NVRMAP_COLLECTOR: Collector name for attribute_table
+    - NVRMAP_DEFAULT_GAIN_SCORE: Default gain score (float)
+    - NVRMAP_DEFAULT_HABITAT_SCORE: Default habitat score (float)
+
+    Returns:
+        Dict[str, Any]: Dictionary with configuration keys that were found
+                       in environment variables.
+    """
+    config = {}
+
+    # EVC data path
+    evc_data = os.environ.get('NVRMAP_EVC_DATA', '').strip()
+    if evc_data:
+        config['evc_data'] = evc_data
+
+    # Attribute table settings
+    attr_config = {}
+
+    project = os.environ.get('NVRMAP_PROJECT', '').strip()
+    if project:
+        attr_config['project'] = project
+
+    collector = os.environ.get('NVRMAP_COLLECTOR', '').strip()
+    if collector:
+        attr_config['collector'] = collector
+
+    gain_score = os.environ.get('NVRMAP_DEFAULT_GAIN_SCORE', '').strip()
+    if gain_score:
+        try:
+            attr_config['default_gain_score'] = float(gain_score)
+        except ValueError:
+            logging.warning(f"Invalid NVRMAP_DEFAULT_GAIN_SCORE value: {gain_score}")
+
+    habitat_score = os.environ.get('NVRMAP_DEFAULT_HABITAT_SCORE', '').strip()
+    if habitat_score:
+        try:
+            attr_config['default_habitat_score'] = float(habitat_score)
+        except ValueError:
+            logging.warning(f"Invalid NVRMAP_DEFAULT_HABITAT_SCORE value: {habitat_score}")
+
+    if attr_config:
+        config['attribute_table'] = attr_config
+
+    return config
+
+
 def load_config() -> Dict[str, Any]:
     """Load configuration from environment variables and config file.
 
     Configuration priority (highest to lowest):
-    1. Environment variables (NVRMAP_DB_* for database connection)
+    1. Environment variables (NVRMAP_*)
     2. Config file ($NVRMAP_CONFIG/config.json)
 
     Database environment variables:
@@ -117,6 +170,13 @@ def load_config() -> Dict[str, Any]:
     - NVRMAP_DB_PASSWORD: Database password
     - NVRMAP_DB_HOST: Database host
     - NVRMAP_DB_NAME: Database name
+
+    Other environment variables:
+    - NVRMAP_EVC_DATA: Path to EVC data Excel file
+    - NVRMAP_PROJECT: Project identifier
+    - NVRMAP_COLLECTOR: Collector name
+    - NVRMAP_DEFAULT_GAIN_SCORE: Default gain score (float)
+    - NVRMAP_DEFAULT_HABITAT_SCORE: Default habitat score (float)
 
     The config file is optional if all database environment variables are provided.
     Environment variables can partially override config file values.
@@ -175,6 +235,20 @@ def load_config() -> Dict[str, Any]:
             f"Missing required database configuration keys: {missing_keys}. "
             "Provide them via environment variables (NVRMAP_DB_*) or config file."
         )
+
+    # Load other config from environment variables and merge
+    config_from_env = load_config_from_env()
+
+    # Merge evc_data: env var overrides config file
+    if 'evc_data' in config_from_env:
+        final_config['evc_data'] = config_from_env['evc_data']
+
+    # Merge attribute_table: env vars override config file values
+    if 'attribute_table' in config_from_env:
+        if 'attribute_table' in final_config:
+            final_config['attribute_table'].update(config_from_env['attribute_table'])
+        else:
+            final_config['attribute_table'] = config_from_env['attribute_table']
 
     return final_config
 

@@ -41,11 +41,21 @@
 
 ### Environment Variables (preferred for credentials)
 ```bash
+# Database connection
 NVRMAP_DB_TYPE=postgresql+psycopg2
 NVRMAP_DB_USER=gisuser
 NVRMAP_DB_PASSWORD=secret
 NVRMAP_DB_HOST=localhost
 NVRMAP_DB_NAME=gisdb
+
+# EVC data path
+NVRMAP_EVC_DATA=/path/to/evc_data.xlsx
+
+# Attribute table settings
+NVRMAP_PROJECT=MyProject
+NVRMAP_COLLECTOR=CollectorName
+NVRMAP_DEFAULT_GAIN_SCORE=0.22
+NVRMAP_DEFAULT_HABITAT_SCORE=0.5
 ```
 
 ### Config File (fallback)
@@ -109,7 +119,7 @@ nix develop  # Enter dev shell with all dependencies
 - Schema definitions for each output format
 
 ### Key Functions
-- `load_config()` / `load_db_config_from_env()` - Configuration loading
+- `load_config()` / `load_db_config_from_env()` / `load_config_from_env()` - Configuration loading
 - `connect_db()` - Database connection and table reflection
 - `process_view_pfis()` - PFI conversion (property to parcel)
 - `build_query()` - Spatial SQL query construction
@@ -141,6 +151,12 @@ Edit `build_query()` - uses SQLAlchemy ORM with PostGIS functions (ST_Buffer, ST
 2. Use `get_attribute(config, 'key')` to access values
 
 ## Testing
+
+For local testing, set `NVRMAP_CONFIG` to the project directory:
+```bash
+export NVRMAP_CONFIG='/home/brendon/Development/db-ensym'
+export NVRMAP_DB_PASSWORD='your_password'  # Or configure in flake.nix
+```
 
 Run with a known PFI to verify output:
 ```bash
