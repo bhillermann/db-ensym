@@ -481,7 +481,7 @@ def lookup_bcs_value(bioevc: str, evc_df: pd.DataFrame) -> str:
              For values other than 'LC', returns only the first character.
     """
     try:
-        bcs_value = evc_df[evc_df['BIOEVCCODE'].str.contains(bioevc)]['BCS_CATEGORY'].iloc[0]
+        bcs_value = evc_df[evc_df['BIOEVCCODE'].str.contains(bioevc)]['BCS1'].iloc[0]
     except IndexError:
         logging.warning(f"BCS value not found for {bioevc}, defaulting to 'LC'")
         return 'LC'

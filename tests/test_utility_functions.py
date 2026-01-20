@@ -253,7 +253,7 @@ class TestLookupBcsValue:
                 'VVP_0003',
                 'VVP_0004'
             ],
-            'BCS_CATEGORY': [
+            'BCS1': [
                 'Endangered',
                 'Vulnerable',
                 'Depleted',
@@ -307,7 +307,7 @@ class TestLookupBcsValue:
 
     def test_lookup_empty_dataframe(self):
         """Test lookup with empty DataFrame (returns 'LC')."""
-        empty_df = pd.DataFrame({'BIOEVCCODE': [], 'BCS_CATEGORY': []})
+        empty_df = pd.DataFrame({'BIOEVCCODE': [], 'BCS1': []})
         result = lookup_bcs_value('VVP_0055', empty_df)
         assert result == 'LC'
 
@@ -315,7 +315,7 @@ class TestLookupBcsValue:
         """Test lookup with whitespace-only BCS value (returns 'LC')."""
         df = pd.DataFrame({
             'BIOEVCCODE': ['VVP_0055'],
-            'BCS_CATEGORY': ['   ']
+            'BCS1': ['   ']
         })
         result = lookup_bcs_value('VVP_0055', df)
         assert result == 'LC'
@@ -324,7 +324,7 @@ class TestLookupBcsValue:
         """Test lookup with empty string BCS value (returns 'LC')."""
         df = pd.DataFrame({
             'BIOEVCCODE': ['VVP_0055'],
-            'BCS_CATEGORY': ['']
+            'BCS1': ['']
         })
         result = lookup_bcs_value('VVP_0055', df)
         assert result == 'LC'
@@ -342,7 +342,7 @@ class TestLookupBcsValue:
         """
         df = pd.DataFrame({
             'BIOEVCCODE': ['VVP_0055', 'VVP_00551', 'GGP_0132'],
-            'BCS_CATEGORY': ['Endangered', 'Vulnerable', 'Depleted']
+            'BCS1': ['Endangered', 'Vulnerable', 'Depleted']
         })
 
         # Substring 'VVP_005' matches both 'VVP_0055' and 'VVP_00551'
@@ -442,10 +442,10 @@ class TestEdgeCasesAndIntegration:
         assert result == 1
 
     def test_lookup_bcs_with_numeric_bcs_value(self):
-        """Test lookup_bcs_value when BCS_CATEGORY is numeric."""
+        """Test lookup_bcs_value when BCS1 is numeric."""
         df = pd.DataFrame({
             'BIOEVCCODE': ['VVP_0055'],
-            'BCS_CATEGORY': [123]  # Numeric value
+            'BCS1': [123]  # Numeric value
         })
         result = lookup_bcs_value('VVP_0055', df)
         # isinstance(123, str) is False, so should return 'LC'
@@ -477,7 +477,7 @@ class TestEdgeCasesAndIntegration:
         # Create sample EVC DataFrame and lookup BCS
         evc_df = pd.DataFrame({
             'BIOEVCCODE': ['VVP_0055'],
-            'BCS_CATEGORY': ['Endangered']
+            'BCS1': ['Endangered']
         })
         bcs = lookup_bcs_value(bioevc, evc_df)
         assert bcs == 'E'

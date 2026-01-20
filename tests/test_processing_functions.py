@@ -103,7 +103,7 @@ def sample_evc_df():
     """Create a sample EVC DataFrame."""
     return pd.DataFrame({
         'BIOEVCCODE': ['VVP_0055', 'STIF0132', 'GGP_0175', 'NCU_0823'],
-        'BCS_CATEGORY': ['Endangered', 'Vulnerable', 'Depleted', 'LC']
+        'BCS1': ['Endangered', 'Vulnerable', 'Depleted', 'LC']
     })
 
 

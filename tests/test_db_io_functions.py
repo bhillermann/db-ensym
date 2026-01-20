@@ -428,7 +428,7 @@ class TestLoadEvcData:
         # Setup mock
         mock_df = pd.DataFrame({
             'BIOEVCCODE': ['VVP_0055', 'STIF_0135'],
-            'BCS_CATEGORY': ['E', 'V']
+            'BCS1': ['E', 'V']
         })
         mock_read_excel.return_value = mock_df
 
@@ -448,7 +448,7 @@ class TestLoadEvcData:
         # Setup mock
         mock_df = pd.DataFrame({
             'BIOEVCCODE': ['VVP_0055'],
-            'BCS_CATEGORY': ['E']
+            'BCS1': ['E']
         })
         mock_read_excel.return_value = mock_df
 
@@ -468,7 +468,7 @@ class TestLoadEvcData:
         """Test load_evc_data with relative file path."""
         mock_df = pd.DataFrame({
             'BIOEVCCODE': ['VVP_0055'],
-            'BCS_CATEGORY': ['E']
+            'BCS1': ['E']
         })
         mock_read_excel.return_value = mock_df
 
@@ -484,7 +484,7 @@ class TestLoadEvcData:
         """Test load_evc_data returns a pandas DataFrame."""
         expected_df = pd.DataFrame({
             'BIOEVCCODE': ['VVP_0055', 'STIF_0135', 'VVP_0132'],
-            'BCS_CATEGORY': ['E', 'V', 'D'],
+            'BCS1': ['E', 'V', 'D'],
             'EVC_NAME': ['Coastal Alkaline Scrub', 'Heathy Woodland', 'Valley Grassy Forest']
         })
         mock_read_excel.return_value = expected_df
@@ -493,7 +493,7 @@ class TestLoadEvcData:
 
         assert isinstance(result, pd.DataFrame)
         assert result.equals(expected_df)
-        assert list(result.columns) == ['BIOEVCCODE', 'BCS_CATEGORY', 'EVC_NAME']
+        assert list(result.columns) == ['BIOEVCCODE', 'BCS1', 'EVC_NAME']
 
     @patch('db_nvrmap.pd.read_excel')
     def test_load_evc_data_file_not_found(self, mock_read_excel: Mock):
@@ -707,7 +707,7 @@ class TestIntegration:
         # Create realistic EVC data
         evc_data = pd.DataFrame({
             'BIOEVCCODE': ['VVP_0055', 'STIF_0135', 'VVP_0132'],
-            'BCS_CATEGORY': ['Endangered', 'Vulnerable', 'Depleted'],
+            'BCS1': ['Endangered', 'Vulnerable', 'Depleted'],
             'EVC_NAME': ['Coastal Alkaline Scrub', 'Heathy Woodland', 'Valley Grassy Forest']
         })
         mock_read_excel.return_value = evc_data
