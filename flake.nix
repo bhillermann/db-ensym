@@ -1,45 +1,46 @@
 {
   description = "db-nvrmap flake";
 
-  inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-  };
+  inputs = { nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable"; };
 
   outputs = { nixpkgs, ... }:
     let
-      supportedSystems = [ "x86_64-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
+      configFilePath =
+        "./config.json";
+      secretPath =
+        "$HOME/.config/opnix/secrets/postgisPassword"; # location of file containing the database password
+      supportedSystems =
+        [ "x86_64-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
 
-      forAllSystems = f: 
-	nixpkgs.lib.genAttrs supportedSystems (system: 
-	  let
-	    pkgs = nixpkgs.legacyPackages.${system};
-    
-	    pythonEnv = pkgs.python3.withPackages (p: with p; [
-	      numpy
-	      pandas
-	      geopandas
-	      sqlalchemy
-	      geoalchemy2
-	      psycopg2
-	      openpyxl
-	      fiona
-	    ]);
+      forAllSystems = f:
+        nixpkgs.lib.genAttrs supportedSystems (system:
+          let
+            pkgs = nixpkgs.legacyPackages.${system};
 
-	  in 
+            pythonEnv = pkgs.python3.withPackages (p:
+              with p; [
+                numpy
+                pandas
+                geopandas
+                sqlalchemy
+                geoalchemy2
+                psycopg2
+                openpyxl
+                fiona
+              ]);
 
-	    f { inherit pkgs pythonEnv system; }
-	);
+          in f { inherit pkgs pythonEnv system; });
 
     in {
-      packages = forAllSystems ({ pkgs, pythonEnv, ... }: { 
-	default = pkgs.stdenv.mkDerivation {
-	  pname = "db-ensym";
-	  version = "1.1";
+      packages = forAllSystems ({ pkgs, pythonEnv, ... }: {
+        default = pkgs.stdenv.mkDerivation {
+          pname = "db-ensym";
+          version = "1.1";
 
-	  src = ./.;
+          src = ./.;
 
-	  buildInputs = [ pythonEnv ];
-	  dontBuild = true;
+          buildInputs = [ pythonEnv ];
+          dontBuild = true;
 
           installPhase = ''
             mkdir -p $out/bin
@@ -50,9 +51,14 @@
       });
 
       devShells = forAllSystems ({ pkgs, pythonEnv, ... }: {
-	default = pkgs.mkShell {
-	  buildInputs = [ pythonEnv ];
-	};
+        default = pkgs.mkShell {
+          buildInputs = [ pythonEnv pkgs.python3Packages.pytest ];
+          shellHook = ''
+                export NVRMAP_DB_PASSWORD=`${pkgs.coreutils}/bin/cat ${secretPath}`
+            		export NVRMAP_CONFIG=${configFilePath}
+            		${pkgs.coreutils}/bin/echo "Environment variables set!"
+          '';
+        };
       });
     };
 }
