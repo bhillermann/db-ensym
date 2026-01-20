@@ -51,7 +51,7 @@
 
       devShells = forAllSystems ({ pkgs, pythonEnv, ... }: {
 	default = pkgs.mkShell {
-	  buildInputs = [ pythonEnv ];
+	  buildInputs = [ pythonEnv pkgs.python3Packages.pytest ];
 	};
       });
     };
