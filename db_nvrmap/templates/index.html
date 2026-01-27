@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>db-nvrmap - Shapefile Generator</title>
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 2rem;
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        h1 {
+            color: #2c3e50;
+            margin-bottom: 0.5rem;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 2rem;
+        }
+
+        .flash-messages {
+            margin-bottom: 1rem;
+        }
+
+        .flash {
+            padding: 0.75rem 1rem;
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+        }
+
+        .flash.error {
+            background: #fee;
+            border: 1px solid #fcc;
+            color: #c00;
+        }
+
+        .flash.success {
+            background: #efe;
+            border: 1px solid #cfc;
+            color: #060;
+        }
+
+        form {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .form-group {
+            margin-bottom: 1.25rem;
+        }
+
+        label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #444;
+        }
+
+        .label-hint {
+            font-weight: normal;
+            color: #888;
+            font-size: 0.875rem;
+        }
+
+        textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.9rem;
+            resize: vertical;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+        }
+
+        input[type="text"],
+        input[type="number"] {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+
+        input[type="text"]:focus,
+        input[type="number"]:focus {
+            outline: none;
+            border-color: #3498db;
+            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+        }
+
+        .radio-group {
+            display: flex;
+            gap: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .radio-option {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            cursor: pointer;
+        }
+
+        .radio-option input[type="radio"] {
+            margin: 0;
+        }
+
+        .inline-fields {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        button {
+            width: 100%;
+            padding: 0.875rem;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #2980b9;
+        }
+
+        button:active {
+            background: #2472a4;
+        }
+
+        .help-text {
+            font-size: 0.8rem;
+            color: #888;
+            margin-top: 0.25rem;
+        }
+
+        footer {
+            margin-top: 2rem;
+            text-align: center;
+            color: #888;
+            font-size: 0.875rem;
+        }
+
+        footer a {
+            color: #3498db;
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <h1>db-nvrmap</h1>
+    <p class="subtitle">Generate EnSym and NVRMap shapefiles from PFI numbers</p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div class="flash-messages">
+                {% for category, message in messages %}
+                    <div class="flash {{ category }}">{{ message }}</div>
+                {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
+    <form action="{{ url_for('generate') }}" method="POST">
+        <div class="form-group">
+            <label for="pfis">
+                PFI Numbers
+                <span class="label-hint">(one per line, or comma/space separated)</span>
+            </label>
+            <textarea
+                id="pfis"
+                name="pfis"
+                rows="6"
+                placeholder="12345678&#10;87654321&#10;11223344"
+                required
+            ></textarea>
+        </div>
+
+        <div class="form-group">
+            <label>View Type</label>
+            <div class="radio-group">
+                <label class="radio-option">
+                    <input type="radio" name="view_type" value="parcel" checked>
+                    Parcel View PFIs
+                </label>
+                <label class="radio-option">
+                    <input type="radio" name="view_type" value="property">
+                    Property View PFIs
+                </label>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label>Output Format</label>
+            <div class="radio-group">
+                <label class="radio-option">
+                    <input type="radio" name="output_format" value="nvrmap" checked>
+                    NVRMap
+                </label>
+                <label class="radio-option">
+                    <input type="radio" name="output_format" value="ensym_2017">
+                    EnSym 2017
+                </label>
+                <label class="radio-option">
+                    <input type="radio" name="output_format" value="ensym_2013">
+                    EnSym 2013 SBEU
+                </label>
+            </div>
+        </div>
+
+        <div class="inline-fields">
+            <div class="form-group">
+                <label for="filename">Output Filename</label>
+                <input
+                    type="text"
+                    id="filename"
+                    name="filename"
+                    placeholder="output"
+                    pattern="[a-zA-Z0-9_-]+"
+                    title="Letters, numbers, underscores, and hyphens only"
+                >
+                <p class="help-text">Leave blank for "output"</p>
+            </div>
+
+            <div class="form-group">
+                <label for="gainscore">Gain Score Override</label>
+                <input
+                    type="number"
+                    id="gainscore"
+                    name="gainscore"
+                    placeholder="0.22"
+                    step="0.01"
+                    min="0"
+                    max="1"
+                >
+                <p class="help-text">Leave blank for default</p>
+            </div>
+        </div>
+
+        <button type="submit">Generate Shapefile</button>
+    </form>
+
+    <footer>
+        <p>
+            db-nvrmap &mdash;
+            <a href="https://github.com/your-username/db-ensym">Documentation</a>
+        </p>
+    </footer>
+</body>
+</html>

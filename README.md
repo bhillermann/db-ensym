@@ -38,6 +38,9 @@ db-nvrmap [OPTIONS] N [N ...]
 | `-p` | `--property` | Use Property View PFIs instead of Parcel View PFIs |
 | `-e` | `--ensym` | Output in EnSym 2017 format |
 | `-b` | `--sbeu` | Output in EnSym 2013 SBEU format |
+| | `--web` | Start the web interface instead of processing PFIs |
+| | `--port PORT` | Port for web server (default: 5000) |
+| | `--host HOST` | Host for web server (default: 127.0.0.1) |
 
 ### Examples
 
@@ -66,6 +69,41 @@ db-nvrmap -g 0.35 12345678
 # Combine options: EnSym format with custom shapefile and gain score
 db-nvrmap -e -s ensym_output -g 0.30 12345678 87654321
 ```
+
+## Web Interface
+
+The tool includes an optional web interface for users who prefer a graphical form over the command line.
+
+### Starting the Web Server
+
+```bash
+# Start on localhost:5000 (default)
+db-nvrmap --web
+
+# Start on a custom port
+db-nvrmap --web --port 8080
+
+# Make accessible on the network
+db-nvrmap --web --host 0.0.0.0
+
+# Custom host and port
+db-nvrmap --web --host 0.0.0.0 --port 8080
+```
+
+### Web Interface Features
+
+- **PFI Input**: Paste PFI numbers in a textarea (supports comma, space, or newline separation)
+- **View Type Toggle**: Switch between Parcel View and Property View PFIs
+- **Output Format Selection**: Choose from NVRMap, EnSym 2017, or EnSym 2013 SBEU formats
+- **Optional Gain Score Override**: Specify a custom gain score value
+- **Custom Filename**: Set the output filename (defaults to "output")
+- **ZIP Download**: Downloads all shapefile components as a single ZIP file
+
+### Security Notes
+
+When running with `--host 0.0.0.0`, the web interface will be accessible from other machines on the network. Only use this in trusted network environments. The default `127.0.0.1` restricts access to localhost only.
+
+For production deployments, consider placing the Flask app behind a reverse proxy (nginx, Apache) with proper authentication.
 
 ## Configuration File
 
@@ -270,6 +308,7 @@ The development shell includes Python 3 with the following packages:
 - psycopg2
 - openpyxl
 - fiona
+- flask
 
 ### Building the Package
 
@@ -302,6 +341,7 @@ nix profile install .
 - psycopg2
 - openpyxl
 - fiona
+- flask (for web interface)
 
 ### External Requirements
 - PostGIS-enabled PostgreSQL database
