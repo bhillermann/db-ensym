@@ -1,6 +1,6 @@
-db_config.json
+config.json
 .envrc
 .direnv
 .vscode
-__pycache__
-result
+__pycache__/
+*.pyc

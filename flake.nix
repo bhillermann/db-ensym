@@ -1,9 +1,7 @@
 {
   description = "db-nvrmap flake";
 
-  inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-  };
+  inputs = { nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable"; };
 
   outputs = { nixpkgs, ... }:
     let
@@ -38,10 +36,10 @@
 	  pname = "db-ensym";
 	  version = "1.2";
 
-	  src = ./.;
+          src = ./.;
 
-	  buildInputs = [ pythonEnv ];
-	  dontBuild = true;
+          buildInputs = [ pythonEnv ];
+          dontBuild = true;
 
           installPhase = ''
             mkdir -p $out/bin
@@ -68,9 +66,14 @@ EOF
       });
 
       devShells = forAllSystems ({ pkgs, pythonEnv, ... }: {
-	default = pkgs.mkShell {
-	  buildInputs = [ pythonEnv ];
-	};
+        default = pkgs.mkShell {
+          buildInputs = [ pythonEnv pkgs.python3Packages.pytest ];
+          shellHook = ''
+                export NVRMAP_DB_PASSWORD=`${pkgs.coreutils}/bin/cat ${secretPath}`
+            		export NVRMAP_CONFIG=${configFilePath}
+            		${pkgs.coreutils}/bin/echo "Environment variables set!"
+          '';
+        };
       });
     };
 }
