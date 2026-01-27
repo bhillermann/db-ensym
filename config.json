@@ -1,0 +1,15 @@
+{
+  "db_connection": {
+    "db_type": "postgresql+psycopg2",
+    "username": "gisuser",
+    "host": "localhost",
+    "database": "gisdb"
+  },
+  "evc_data": "/home/brendon/Documents/GIS/Ensym/EVC benchmark data - external use.xlsx",
+  "attribute_table": {
+    "project": "Scenario Test",
+    "collector": "VegLink",
+    "default_gain_score": 0.22,
+    "default_habitat_score": 0.4
+  }
+}
