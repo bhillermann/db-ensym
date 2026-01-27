@@ -24,6 +24,7 @@
 	      openpyxl
 	      fiona
 	      flask
+	      gunicorn
 	    ]);
 
 	  in

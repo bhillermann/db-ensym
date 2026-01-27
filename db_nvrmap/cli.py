@@ -74,6 +74,17 @@ Examples:
         default='127.0.0.1',
         help="Host for web server (default: 127.0.0.1). Use 0.0.0.0 for network access."
     )
+    parser.add_argument(
+        "--production",
+        action='store_true',
+        help="Use Gunicorn production server instead of Flask development server"
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Number of Gunicorn worker processes (default: 4, only used with --production)"
+    )
 
     return parser.parse_args(args)
 
@@ -115,9 +126,34 @@ def run_web(args: argparse.Namespace) -> int:
     """Run the web server."""
     from .web import create_app
 
-    app = create_app()
-    print(f"Starting web interface at http://{args.host}:{args.port}")
-    app.run(host=args.host, port=args.port, debug=False)
+    if args.production:
+        import gunicorn.app.base
+
+        class StandaloneApplication(gunicorn.app.base.BaseApplication):
+            def __init__(self, app, options=None):
+                self.options = options or {}
+                self.application = app
+                super().__init__()
+
+            def load_config(self):
+                for key, value in self.options.items():
+                    if key in self.cfg.settings and value is not None:
+                        self.cfg.set(key.lower(), value)
+
+            def load(self):
+                return self.application
+
+        app = create_app()
+        options = {
+            'bind': f'{args.host}:{args.port}',
+            'workers': args.workers,
+        }
+        print(f"Starting Gunicorn with {args.workers} workers at http://{args.host}:{args.port}")
+        StandaloneApplication(app, options).run()
+    else:
+        app = create_app()
+        print(f"Starting web interface at http://{args.host}:{args.port}")
+        app.run(host=args.host, port=args.port, debug=False)
     return 0
 
 
