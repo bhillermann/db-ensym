@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 import geopandas as gpd
-from sqlalchemy import create_engine, select, func, MetaData
+from sqlalchemy import create_engine, select, func, MetaData, cast
 from sqlalchemy.engine.url import URL
 from geoalchemy2 import Geometry
 
@@ -86,6 +86,18 @@ class ProcessingOptions:
     gainscore: Optional[float] = None
     property_view: bool = False
     output_format: OutputFormat = OutputFormat.NVRMAP
+    input_shapefile: Optional[str] = None
+    site_id_field: Optional[str] = None
+
+    def __post_init__(self):
+        """Validate that exactly one input mode is specified."""
+        has_pfi = self.view_pfi and len(self.view_pfi) > 0
+        has_shapefile = self.input_shapefile is not None
+
+        if not has_pfi and not has_shapefile:
+            raise ValueError("Either view_pfi or input_shapefile must be provided")
+        if has_pfi and has_shapefile:
+            raise ValueError("Cannot specify both view_pfi and input_shapefile")
 
     @property
     def ensym(self) -> bool:
@@ -96,6 +108,11 @@ class ProcessingOptions:
     def sbeu(self) -> bool:
         """Check if output format is EnSym 2013 SBEU."""
         return self.output_format == OutputFormat.ENSYM_2013
+
+    @property
+    def uses_shapefile_input(self) -> bool:
+        """Check if using shapefile input mode."""
+        return self.input_shapefile is not None
 
 
 def load_config() -> Dict[str, Any]:
@@ -204,6 +221,93 @@ def build_query(parcel_view, nv1750_evc, bioregions, pfi_values: List[str]) -> A
     return select(bio_clipped_subq).order_by(bio_clipped_subq.c.bioregcode)
 
 
+def build_query_from_geometry(
+    parcel_view,
+    nv1750_evc,
+    bioregions,
+    geometry_wkt: str,
+    srid: int = 7899
+) -> Any:
+    """
+    Construct SQL query for spatial data extraction using provided geometry.
+
+    The query:
+    1. Finds parcel_view geometries that intersect the input geometry
+    2. Buffers those parcel geometries by -6m (to avoid cadastral edge artifacts)
+    3. Clips the input geometry to the buffered parcel union
+    4. Intersects the clipped result with EVC and bioregion data
+
+    Args:
+        parcel_view: SQLAlchemy table for parcel view data
+        nv1750_evc: SQLAlchemy table for EVC data
+        bioregions: SQLAlchemy table for bioregion data
+        geometry_wkt: WKT representation of input geometry
+        srid: Spatial Reference ID (default 7899 for Victoria)
+
+    Returns:
+        SQLAlchemy select statement
+    """
+    # Convert WKT to PostGIS geometry
+    input_geom = func.ST_GeomFromText(geometry_wkt, srid)
+
+    # Step 1: Buffer each parcel by -6m first, then union them together
+    # This preserves gaps between adjacent parcels (buffering after union would not)
+    # Use scalar_subquery() since this returns a single aggregated geometry value
+    buffered_parcels = (
+        select(
+            func.ST_Union(
+                func.ST_Buffer(parcel_view.c.geom, -6)
+            )
+        )
+        .where(func.ST_Intersects(parcel_view.c.geom, input_geom))
+        .scalar_subquery()
+    )
+
+    # Step 2: Clip input geometry to buffered parcel union
+    clipped_to_parcels = func.ST_Intersection(input_geom, buffered_parcels)
+
+    # Step 3: Intersect with EVC (using clipped geometry)
+    clipped_geom = func.ST_Dump(
+        func.ST_Intersection(clipped_to_parcels, nv1750_evc.c.geom)
+    ).geom
+
+    # Cast to Geometry type for proper handling (required for ST_Dump results)
+    clipped_geom_typed = cast(clipped_geom, Geometry)
+
+    clipped_subq = (
+        select(
+            nv1750_evc.c.evc,
+            nv1750_evc.c.x_evcname,
+            clipped_geom_typed.label("geom")
+        )
+        .where(func.ST_Intersects(clipped_to_parcels, nv1750_evc.c.geom))
+        .subquery("clipped")
+    )
+
+    # Intersect with bioregions
+    outer_geom = func.ST_Dump(
+        func.ST_Intersection(clipped_subq.c.geom, bioregions.c.geom)
+    ).geom
+
+    # Cast to Geometry type for proper handling
+    outer_geom_typed = cast(outer_geom, Geometry)
+
+    bio_clipped_subq = (
+        select(
+            clipped_subq.c.evc,
+            clipped_subq.c.x_evcname,
+            bioregions.c.bioregcode,
+            bioregions.c.bioregion,
+            outer_geom_typed.label("geom")
+        )
+        .join(bioregions, func.ST_Intersects(clipped_subq.c.geom, bioregions.c.geom))
+        .where(func.ST_Dimension(clipped_subq.c.geom) == 2)
+        .subquery("bio_clipped")
+    )
+
+    return select(bio_clipped_subq).order_by(bio_clipped_subq.c.bioregcode)
+
+
 def load_geo_dataframe(engine, query: Any) -> gpd.GeoDataFrame:
     """Load spatial data into a GeoDataFrame."""
     gdf = gpd.GeoDataFrame.from_postgis(query, con=engine.connect(), geom_col="geom")
@@ -217,6 +321,157 @@ def load_evc_data(path: str) -> pd.DataFrame:
     return pd.read_excel(Path(path).expanduser())
 
 
+def load_input_shapefile(path: str, site_id_field: Optional[str] = None) -> gpd.GeoDataFrame:
+    """
+    Load user-provided input shapefile.
+
+    Args:
+        path: Path to the shapefile
+        site_id_field: Optional field to use for site_id grouping (reserved for future use, not currently implemented)
+
+    Returns:
+        GeoDataFrame with geometry and optional site_id
+
+    Raises:
+        ValueError: If shapefile has no CRS, invalid geometry types, or file not found
+    """
+    logging.info(f"Loading input shapefile from {path}")
+    gdf = gpd.read_file(path)
+
+    # Validate CRS - must be EPSG:7899 (Victorian) or reproject
+    if gdf.crs is None:
+        raise ValueError("Input shapefile has no CRS defined. Expected EPSG:7899.")
+
+    if gdf.crs.to_epsg() != 7899:
+        logging.info(f"Reprojecting from {gdf.crs} to EPSG:7899")
+        gdf = gdf.to_crs(DEFAULT_CRS)
+
+    # Validate geometry type - must be Polygon or MultiPolygon
+    geom_types = gdf.geometry.geom_type.unique()
+    valid_types = {'Polygon', 'MultiPolygon'}
+    if not set(geom_types).issubset(valid_types):
+        raise ValueError(f"Input shapefile must contain Polygon geometries. Found: {geom_types}")
+
+    # Explode MultiPolygons to Polygons for consistent processing
+    if 'MultiPolygon' in geom_types:
+        logging.info("Exploding MultiPolygons to Polygons")
+        gdf = gdf.explode(index_parts=False).reset_index(drop=True)
+
+    logging.info(f"Loaded {len(gdf)} polygon(s) from input shapefile")
+    return gdf
+
+
+def check_parcel_intersection(engine: Any, parcel_view, geometry_wkt: str, srid: int = 7899) -> bool:
+    """
+    Check if any parcels intersect with the given geometry.
+
+    Args:
+        engine: SQLAlchemy database engine
+        parcel_view: SQLAlchemy table for parcel view data
+        geometry_wkt: WKT representation of input geometry
+        srid: Spatial Reference ID (default 7899 for Victoria)
+
+    Returns:
+        True if at least one parcel intersects, False otherwise
+    """
+    input_geom = func.ST_GeomFromText(geometry_wkt, srid)
+    query = select(func.count()).where(func.ST_Intersects(parcel_view.c.geom, input_geom))
+
+    with engine.connect() as conn:
+        result = conn.execute(query).scalar()
+
+    return result > 0
+
+
+def process_shapefile_input(
+    opts: ProcessingOptions,
+    engine: Any,
+    tables: Dict[str, Any]
+) -> Tuple[gpd.GeoDataFrame, List[str]]:
+    """
+    Process user-provided shapefile through EVC/bioregion intersection.
+
+    This function loads the input shapefile, processes each polygon separately
+    to intersect with EVC and bioregion data from the database, and returns
+    the combined results along with synthetic view_pfi values.
+
+    The custom polygon is clipped to the buffered (-6m) union of intersecting
+    parcel boundaries from parcel_view, ensuring cadastral edge artifacts are
+    avoided while respecting the user's area of interest.
+
+    Args:
+        opts: Processing options with input_shapefile path
+        engine: SQLAlchemy database engine
+        tables: Dictionary of reflected database tables
+
+    Returns:
+        Tuple of (GeoDataFrame with intersected results, list of synthetic view_pfis)
+
+    Raises:
+        ValueError: If no cadastral parcels or EVC/bioregion data found for any input polygons
+    """
+    logging.info("Processing shapefile input mode")
+
+    # Load input shapefile
+    input_gdf = load_input_shapefile(opts.input_shapefile, opts.site_id_field)
+
+    results = []
+    successful_indices = []
+
+    # Process each polygon separately and track source
+    for idx, row in input_gdf.iterrows():
+        geom_wkt = row.geometry.wkt
+
+        logging.info(f"Processing polygon {idx + 1}/{len(input_gdf)}")
+
+        # Check if any parcels intersect this polygon
+        if not check_parcel_intersection(engine, tables["parcel_view"], geom_wkt):
+            logging.warning(
+                f"No cadastral parcels found intersecting polygon {idx}. "
+                "Ensure your shapefile overlaps with parcel_view data."
+            )
+            continue
+
+        query = build_query_from_geometry(
+            tables["parcel_view"],
+            tables["nv1750_evc"],
+            tables["bioregions"],
+            geom_wkt
+        )
+
+        try:
+            result_gdf = load_geo_dataframe(engine, query)
+            # Add source polygon index for site_id tracking
+            result_gdf['source_idx'] = idx
+            results.append(result_gdf)
+            successful_indices.append(idx)
+            logging.info(f"Found {len(result_gdf)} EVC/bioregion intersections for polygon {idx}")
+        except ValueError:
+            # No intersection found for this polygon
+            logging.warning(f"No EVC/bioregion data found for polygon {idx}")
+            continue
+
+    if not results:
+        raise ValueError(
+            "No cadastral parcels found intersecting the input boundary. "
+            "Ensure your shapefile overlaps with parcel_view data."
+        )
+
+    logging.info(f"Successfully processed {len(results)}/{len(input_gdf)} polygons")
+
+    # Combine all results
+    combined_gdf = pd.concat(results, ignore_index=True)
+
+    # Create synthetic view_pfis from successful source indices
+    # These will be used for site_id grouping in downstream processing
+    view_pfis = [str(idx) for idx in successful_indices]
+
+    # Map source_idx to view_pfi column for downstream compatibility
+    combined_gdf['view_pfi'] = combined_gdf['source_idx'].astype(str)
+
+    return combined_gdf, view_pfis
+
+
 def generate_zone_id(count: List[int], si: int) -> str:
     """Generate the Zone IDs by changing the number to characters."""
     if count[si - 1] <= 26:
@@ -226,12 +481,23 @@ def generate_zone_id(count: List[int], si: int) -> str:
 
 
 def process_nvrmap_rows(row: pd.Series,
-                        view_pfi_list: List[int],
-                        count: List[int]
+                        view_pfi_list: List[str],
+                        count: List[int],
+                        pfi_to_si: Dict[str, int]
                         ) -> Tuple[int, str, str]:
-    """Generate site_id, zone_id, and veg_codes for a row."""
-    si = (view_pfi_list.index(row['view_pfi'])
-          + 1 if len(view_pfi_list) > 1 else 1)
+    """
+    Generate site_id, zone_id, and veg_codes for a row.
+
+    Args:
+        row: DataFrame row containing view_pfi, bioregcode, and evc
+        view_pfi_list: List of view PFI strings
+        count: List tracking zone counts per site
+        pfi_to_si: Dictionary mapping view_pfi to site_id for O(1) lookup
+
+    Returns:
+        Tuple of (site_id, zone_id, veg_codes)
+    """
+    si = pfi_to_si.get(row['view_pfi'], 1)
     count[si - 1] += 1
     zi = generate_zone_id(count, si)
     bioevc = (f"{row['bioregcode']}_{str(int(row['evc'])).zfill(4)}"
@@ -242,10 +508,23 @@ def process_nvrmap_rows(row: pd.Series,
 
 def process_ensym_rows(row: pd.Series,
                        evc_df: pd.DataFrame,
-                       view_pfi_list: List[int],
-                       count: List[int]
+                       view_pfi_list: List[str],
+                       count: List[int],
+                       pfi_to_si: Dict[str, int]
                        ) -> Tuple[int, str, str, str]:
-    """Create the `HH_EVC` values from bioregcod and evc, with padding."""
+    """
+    Create the HH_EVC values from bioregcode and evc, with padding.
+
+    Args:
+        row: DataFrame row containing view_pfi, bioregcode, and evc
+        evc_df: DataFrame with EVC lookup data
+        view_pfi_list: List of view PFI strings
+        count: List tracking zone counts per site
+        pfi_to_si: Dictionary mapping view_pfi to site_id for O(1) lookup
+
+    Returns:
+        Tuple of (site_id, zone_id, bioevc, bcs_value)
+    """
     bioevc = ""
     if len(str(row["bioregcode"])) <= 3:
         bioevc = row["bioregcode"] + "_" + str(int(row["evc"])).zfill(4)
@@ -263,8 +542,7 @@ def process_ensym_rows(row: pd.Series,
     elif bcs_value != 'LC':
         bcs_value = bcs_value[0]
 
-    si = (view_pfi_list.index(row['view_pfi'])
-          + 1 if len(view_pfi_list) > 1 else 1)
+    si = pfi_to_si.get(row['view_pfi'], 1)
     count[si - 1] += 1
     zi = generate_zone_id(count, si)
 
@@ -273,12 +551,27 @@ def process_ensym_rows(row: pd.Series,
 
 def build_ensym_gdf(input_gdf: gpd.GeoDataFrame,
                     evc_df: pd.DataFrame,
-                    view_pfi_list: List[int],
+                    view_pfi_list: List[str],
                     config: Dict[str, Any],
                     opts: ProcessingOptions
                     ) -> gpd.GeoDataFrame:
-    """Build the final GeoDataFrame for EnSym output."""
+    """
+    Build the final GeoDataFrame for EnSym output.
+
+    Args:
+        input_gdf: Input GeoDataFrame with spatial and attribute data
+        evc_df: DataFrame containing EVC lookup data
+        view_pfi_list: List of view PFI strings for site_id mapping
+        config: Configuration dictionary
+        opts: Processing options
+
+    Returns:
+        GeoDataFrame formatted for EnSym output
+    """
     count = [0] * len(view_pfi_list)
+    # Create lookup dictionary for O(1) PFI to site_id mapping
+    pfi_to_si = {pfi: idx + 1 for idx, pfi in enumerate(view_pfi_list)} if len(view_pfi_list) > 1 else {}
+
     ensym_gdf = input_gdf.loc[:, ['geom', 'bioregcode', 'evc', 'view_pfi']]
     ensym_gdf['HH_PAI'] = config['attribute_table'].get('project')
     ensym_gdf['HH_D'] = datetime.today().strftime("%Y-%m-%d")
@@ -288,7 +581,7 @@ def build_ensym_gdf(input_gdf: gpd.GeoDataFrame,
     ensym_gdf['HH_VAC'] = "P"
 
     ensym_gdf[['HH_SI', 'HH_ZI', 'HH_EVC', 'BCS']] = \
-        ensym_gdf.apply(lambda row: process_ensym_rows(row, evc_df, view_pfi_list, count), axis=1, result_type="expand")
+        ensym_gdf.apply(lambda row: process_ensym_rows(row, evc_df, view_pfi_list, count, pfi_to_si), axis=1, result_type="expand")
     ensym_gdf['LT_CNT'] = 0
     ensym_gdf['HH_H_S'] = config['attribute_table'].get('default_habitat_score')
 
@@ -301,7 +594,7 @@ def build_ensym_gdf(input_gdf: gpd.GeoDataFrame,
     ensym_gdf = ensym_gdf.drop(['bioregcode', 'evc', 'view_pfi'], axis=1)
 
     cols = ensym_gdf.columns.tolist()
-    cols = cols[+1:] + cols[:+1]
+    cols = cols[1:] + cols[:1]
     ensym_gdf = ensym_gdf[cols]
 
     if opts.sbeu:
@@ -315,12 +608,26 @@ def build_ensym_gdf(input_gdf: gpd.GeoDataFrame,
 
 
 def build_nvrmap_gdf(input_gdf: gpd.GeoDataFrame,
-                     view_pfi_list: List[int],
+                     view_pfi_list: List[str],
                      config: Dict[str, Any],
                      opts: ProcessingOptions
                      ) -> gpd.GeoDataFrame:
-    """Build the final GeoDataFrame for NVRMap output."""
+    """
+    Build the final GeoDataFrame for NVRMap output.
+
+    Args:
+        input_gdf: Input GeoDataFrame with spatial and attribute data
+        view_pfi_list: List of view PFI strings for site_id mapping
+        config: Configuration dictionary
+        opts: Processing options
+
+    Returns:
+        GeoDataFrame formatted for NVRMap output
+    """
     count = [0] * len(view_pfi_list)
+    # Create lookup dictionary for O(1) PFI to site_id mapping
+    pfi_to_si = {pfi: idx + 1 for idx, pfi in enumerate(view_pfi_list)} if len(view_pfi_list) > 1 else {}
+
     gdf = input_gdf.loc[:, ['geom', 'bioregcode', 'evc', 'view_pfi']]
     gdf['site_id'] = 1
     gdf['zone_id'] = gdf.index + 1
@@ -331,7 +638,7 @@ def build_nvrmap_gdf(input_gdf: gpd.GeoDataFrame,
     gdf['type'] = "p"
     gdf['cp'] = config['attribute_table'].get('collector')
     gdf[['site_id', 'zone_id', 'veg_codes']] = gdf.apply(
-        lambda row: process_nvrmap_rows(row, view_pfi_list, count), axis=1, result_type="expand"
+        lambda row: process_nvrmap_rows(row, view_pfi_list, count, pfi_to_si), axis=1, result_type="expand"
     )
     gdf['lt_count'] = 0
     gdf['cond_score'] = config['attribute_table'].get('default_habitat_score')
@@ -392,10 +699,11 @@ def write_shapefile(output_gdf: gpd.GeoDataFrame,
 
 def generate_shapefile(opts: ProcessingOptions) -> gpd.GeoDataFrame:
     """
-    Generate a shapefile from PFI values.
+    Generate a shapefile from PFI values or input shapefile.
 
     This is the main orchestrator function that coordinates the entire
-    shapefile generation process.
+    shapefile generation process. It handles both PFI-based input and
+    custom shapefile input modes.
 
     Args:
         opts: ProcessingOptions containing all configuration for the operation.
@@ -405,10 +713,20 @@ def generate_shapefile(opts: ProcessingOptions) -> gpd.GeoDataFrame:
     """
     config = load_config()
     engine, tables = connect_db(config["db_connection"])
-    view_pfis = process_view_pfis(opts, engine, tables["parcel_property"],
-                                  tables["parcel_detail"], tables["property_detail"])
-    query = build_query(tables["parcel_view"], tables["nv1750_evc"], tables["bioregions"], view_pfis)
-    input_gdf = load_geo_dataframe(engine, query)
+
+    if opts.uses_shapefile_input:
+        # Shapefile input mode
+        logging.info("Using shapefile input mode")
+        input_gdf, view_pfis = process_shapefile_input(opts, engine, tables)
+    else:
+        # PFI input mode (existing logic)
+        logging.info("Using PFI input mode")
+        view_pfis = process_view_pfis(opts, engine, tables["parcel_property"],
+                                      tables["parcel_detail"], tables["property_detail"])
+        query = build_query(tables["parcel_view"], tables["nv1750_evc"],
+                           tables["bioregions"], view_pfis)
+        input_gdf = load_geo_dataframe(engine, query)
+
     evc_df = load_evc_data(config["evc_data"])
     output_gdf = select_output_gdf(opts, input_gdf, evc_df, view_pfis, config)
     write_shapefile(output_gdf, opts.output_format, opts.shapefile)
@@ -417,10 +735,11 @@ def generate_shapefile(opts: ProcessingOptions) -> gpd.GeoDataFrame:
 
 def generate_shapefile_to_gdf(opts: ProcessingOptions) -> gpd.GeoDataFrame:
     """
-    Generate a GeoDataFrame from PFI values without writing to disk.
+    Generate a GeoDataFrame from PFI values or input shapefile without writing to disk.
 
     This function is useful for the web interface where we want to
-    generate the data in memory first.
+    generate the data in memory first. It handles both PFI-based input
+    and custom shapefile input modes.
 
     Args:
         opts: ProcessingOptions containing all configuration for the operation.
@@ -430,9 +749,19 @@ def generate_shapefile_to_gdf(opts: ProcessingOptions) -> gpd.GeoDataFrame:
     """
     config = load_config()
     engine, tables = connect_db(config["db_connection"])
-    view_pfis = process_view_pfis(opts, engine, tables["parcel_property"],
-                                  tables["parcel_detail"], tables["property_detail"])
-    query = build_query(tables["parcel_view"], tables["nv1750_evc"], tables["bioregions"], view_pfis)
-    input_gdf = load_geo_dataframe(engine, query)
+
+    if opts.uses_shapefile_input:
+        # Shapefile input mode
+        logging.info("Using shapefile input mode")
+        input_gdf, view_pfis = process_shapefile_input(opts, engine, tables)
+    else:
+        # PFI input mode (existing logic)
+        logging.info("Using PFI input mode")
+        view_pfis = process_view_pfis(opts, engine, tables["parcel_property"],
+                                      tables["parcel_detail"], tables["property_detail"])
+        query = build_query(tables["parcel_view"], tables["nv1750_evc"],
+                           tables["bioregions"], view_pfis)
+        input_gdf = load_geo_dataframe(engine, query)
+
     evc_df = load_evc_data(config["evc_data"])
     return select_output_gdf(opts, input_gdf, evc_df, view_pfis, config)
