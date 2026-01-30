@@ -19,10 +19,56 @@ from .core import (
 )
 
 
+def extract_shapefile_from_zip(zip_file, temp_dir: str) -> str:
+    """
+    Extract shapefile from uploaded ZIP and return path to .shp file.
+
+    Args:
+        zip_file: Werkzeug FileStorage object
+        temp_dir: Temporary directory path
+
+    Returns:
+        Path to extracted .shp file
+
+    Raises:
+        ValueError: If ZIP doesn't contain valid shapefile components
+    """
+    extract_path = Path(temp_dir) / "input"
+    extract_path.mkdir(exist_ok=True)
+
+    with zipfile.ZipFile(zip_file, 'r') as zf:
+        # Validate ZIP contents for path traversal attacks
+        for member in zf.namelist():
+            if member.startswith('/') or '..' in member:
+                raise ValueError("Invalid file path in ZIP: path traversal detected")
+
+        zf.extractall(extract_path)
+
+    # Find .shp file
+    shp_files = list(extract_path.glob("**/*.shp"))
+    if not shp_files:
+        raise ValueError("No .shp file found in uploaded ZIP")
+    if len(shp_files) > 1:
+        raise ValueError("Multiple .shp files found in ZIP. Please upload only one shapefile.")
+
+    shp_path = shp_files[0]
+
+    # Validate required components exist
+    required_extensions = ['.shp', '.shx', '.dbf', '.prj']
+    for ext in required_extensions:
+        if not (shp_path.parent / (shp_path.stem + ext)).exists():
+            raise ValueError(f"Missing required shapefile component: {shp_path.stem}{ext}")
+
+    return str(shp_path)
+
+
 def create_app() -> Flask:
     """Create and configure the Flask application."""
     app = Flask(__name__, template_folder=Path(__file__).parent / "templates")
     app.secret_key = os.environ.get("FLASK_SECRET_KEY", "dev-key-change-in-production")
+
+    # Set maximum upload size (50MB)
+    app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024
 
     @app.route("/")
     def index():
@@ -31,33 +77,18 @@ def create_app() -> Flask:
 
     @app.route("/generate", methods=["POST"])
     def generate():
-        """Process PFIs and return ZIP download."""
-        # Parse PFIs from textarea (supports comma, space, newline separation)
-        pfi_text = request.form.get("pfis", "").strip()
-        if not pfi_text:
-            flash("Please enter at least one PFI number.", "error")
-            return redirect(url_for("index"))
+        """Process PFIs or uploaded shapefile and return ZIP download."""
+        input_method = request.form.get("input_method", "pfi")
 
-        # Split by any combination of commas, spaces, newlines
-        pfi_strings = re.split(r"[,\s\n]+", pfi_text)
-        pfi_strings = [p.strip() for p in pfi_strings if p.strip()]
-
-        # Validate and convert to integers
-        try:
-            pfis = [int(p) for p in pfi_strings]
-        except ValueError:
-            flash("Invalid PFI format. Please enter only numbers.", "error")
-            return redirect(url_for("index"))
-
-        if not pfis:
-            flash("Please enter at least one PFI number.", "error")
-            return redirect(url_for("index"))
-
-        # Get form options
-        view_type = request.form.get("view_type", "parcel")
+        # Get common form options
         output_format_str = request.form.get("output_format", "nvrmap")
         filename = request.form.get("filename", "").strip() or "output"
         gainscore_str = request.form.get("gainscore", "").strip()
+
+        # Validate filename (server-side security check)
+        if not re.match(r'^[a-zA-Z0-9_-]+$', filename):
+            flash("Invalid filename. Use only letters, numbers, underscores, and hyphens.", "error")
+            return redirect(url_for("index"))
 
         # Parse gain score
         gainscore = None
@@ -76,18 +107,77 @@ def create_app() -> Flask:
         }
         output_format = format_map.get(output_format_str, OutputFormat.NVRMAP)
 
-        # Create processing options
-        opts = ProcessingOptions(
-            view_pfi=pfis,
-            shapefile=filename,
-            gainscore=gainscore,
-            property_view=(view_type == "property"),
-            output_format=output_format,
-        )
+        # Handle different input methods
+        if input_method == "shapefile":
+            # Handle shapefile upload
+            if 'shapefile_upload' not in request.files:
+                flash("Please upload a shapefile.", "error")
+                return redirect(url_for("index"))
+
+            file = request.files['shapefile_upload']
+            if file.filename == '':
+                flash("No file selected.", "error")
+                return redirect(url_for("index"))
+
+            if not file.filename.endswith('.zip'):
+                flash("Please upload a ZIP file containing shapefile components.", "error")
+                return redirect(url_for("index"))
+
+            # Will extract shapefile in temp directory during processing
+            # Store the file for extraction later
+            input_shapefile_file = file
+            opts = ProcessingOptions(
+                view_pfi=[],  # Empty for shapefile mode
+                shapefile=filename,
+                gainscore=gainscore,
+                property_view=False,  # Not applicable for shapefile input
+                output_format=output_format,
+                input_shapefile="__TEMP__",  # Placeholder, will be replaced
+            )
+        else:
+            # Handle PFI input
+            pfi_text = request.form.get("pfis", "").strip()
+            if not pfi_text:
+                flash("Please enter at least one PFI number.", "error")
+                return redirect(url_for("index"))
+
+            # Split by any combination of commas, spaces, newlines
+            pfi_strings = re.split(r"[,\s\n]+", pfi_text)
+            pfi_strings = [p.strip() for p in pfi_strings if p.strip()]
+
+            # Validate and convert to integers
+            try:
+                pfis = [int(p) for p in pfi_strings]
+            except ValueError:
+                flash("Invalid PFI format. Please enter only numbers.", "error")
+                return redirect(url_for("index"))
+
+            if not pfis:
+                flash("Please enter at least one PFI number.", "error")
+                return redirect(url_for("index"))
+
+            view_type = request.form.get("view_type", "parcel")
+            input_shapefile_file = None
+            opts = ProcessingOptions(
+                view_pfi=pfis,
+                shapefile=filename,
+                gainscore=gainscore,
+                property_view=(view_type == "property"),
+                output_format=output_format,
+            )
 
         # Generate shapefile in temp directory, then ZIP
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
+                # If shapefile mode, extract uploaded file first
+                if input_method == "shapefile":
+                    try:
+                        extracted_shp_path = extract_shapefile_from_zip(input_shapefile_file, tmpdir)
+                        opts.input_shapefile = extracted_shp_path
+                    except ValueError as e:
+                        flash(f"Shapefile extraction error: {e}", "error")
+                        return redirect(url_for("index"))
+
                 shapefile_path = Path(tmpdir) / filename
 
                 # Generate the GeoDataFrame

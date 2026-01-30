@@ -16,18 +16,33 @@ def parse_args(args: Optional[list] = None) -> argparse.Namespace:
 Examples:
   db-nvrmap 12345678                    # Process a single PFI
   db-nvrmap -e -p 12345678 87654321     # Property view PFIs in EnSym format
+  db-nvrmap -i boundary.shp -s output   # Process custom shapefile input
+  db-nvrmap -i boundary.shp -e          # Custom shapefile in EnSym format
   db-nvrmap --web                        # Start web interface on localhost:5000
   db-nvrmap --web --port 8080            # Start on custom port
 """
     )
 
-    # Positional arguments (optional when using --web)
+    # Positional arguments (optional when using --web or --input)
     parser.add_argument(
         'view_pfi',
         metavar='N',
         type=int,
         nargs='*',
-        help="PFI of the Parcel View"
+        help="PFI of the Parcel View (optional when using --input)"
+    )
+
+    # Input options
+    parser.add_argument(
+        "-i", "--input",
+        type=str,
+        dest="input_shapefile",
+        help="Path to input shapefile (boundary only). System will intersect with EVC/bioregion data."
+    )
+    parser.add_argument(
+        "--site-id-field",
+        type=str,
+        help="Field name in input shapefile to use for site_id grouping (reserved for future use)"
     )
 
     # Output options
@@ -104,14 +119,27 @@ def args_to_options(args: argparse.Namespace) -> ProcessingOptions:
         gainscore=args.gainscore,
         property_view=args.property,
         output_format=output_format,
+        input_shapefile=args.input_shapefile,
+        site_id_field=args.site_id_field,
     )
 
 
 def run_cli(args: argparse.Namespace) -> int:
     """Run the CLI processing mode."""
-    if not args.view_pfi:
-        print("Error: At least one PFI value is required when not using --web mode.", file=sys.stderr)
+    has_pfi = bool(args.view_pfi)
+    has_shapefile = args.input_shapefile is not None
+
+    if not has_pfi and not has_shapefile:
+        print("Error: Either PFI values or --input shapefile is required.", file=sys.stderr)
         return 1
+
+    if has_pfi and has_shapefile:
+        print("Error: Cannot specify both PFI values and --input shapefile.", file=sys.stderr)
+        return 1
+
+    # Warn if -p flag is used with shapefile input
+    if has_shapefile and args.property:
+        print("Warning: --property flag is ignored when using --input shapefile.", file=sys.stderr)
 
     try:
         opts = args_to_options(args)

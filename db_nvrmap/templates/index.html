@@ -92,7 +92,8 @@
         }
 
         input[type="text"],
-        input[type="number"] {
+        input[type="number"],
+        input[type="file"] {
             width: 100%;
             padding: 0.75rem;
             border: 1px solid #ddd;
@@ -101,7 +102,8 @@
         }
 
         input[type="text"]:focus,
-        input[type="number"]:focus {
+        input[type="number"]:focus,
+        input[type="file"]:focus {
             outline: none;
             border-color: #3498db;
             box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
@@ -173,6 +175,30 @@
             text-decoration: underline;
         }
     </style>
+    <script>
+        function toggleInputMethod() {
+            const method = document.querySelector('input[name="input_method"]:checked').value;
+            const pfiInput = document.getElementById('pfi-input');
+            const shapefileInput = document.getElementById('shapefile-input');
+            const viewTypeGroup = document.getElementById('view-type-group');
+            const pfiTextarea = document.getElementById('pfis');
+            const shapefileFileInput = document.getElementById('shapefile_upload');
+
+            if (method === 'pfi') {
+                pfiInput.style.display = 'block';
+                shapefileInput.style.display = 'none';
+                viewTypeGroup.style.display = 'block';
+                pfiTextarea.required = true;
+                shapefileFileInput.required = false;
+            } else {
+                pfiInput.style.display = 'none';
+                shapefileInput.style.display = 'block';
+                viewTypeGroup.style.display = 'none';
+                pfiTextarea.required = false;
+                shapefileFileInput.required = true;
+            }
+        }
+    </script>
 </head>
 <body>
     <h1>db-nvrmap</h1>
@@ -188,8 +214,22 @@
         {% endif %}
     {% endwith %}
 
-    <form action="{{ url_for('generate') }}" method="POST">
+    <form action="{{ url_for('generate') }}" method="POST" enctype="multipart/form-data">
         <div class="form-group">
+            <label>Input Method</label>
+            <div class="radio-group">
+                <label class="radio-option">
+                    <input type="radio" name="input_method" value="pfi" checked onchange="toggleInputMethod()">
+                    PFI Numbers
+                </label>
+                <label class="radio-option">
+                    <input type="radio" name="input_method" value="shapefile" onchange="toggleInputMethod()">
+                    Upload Shapefile
+                </label>
+            </div>
+        </div>
+
+        <div class="form-group" id="pfi-input">
             <label for="pfis">
                 PFI Numbers
                 <span class="label-hint">(one per line, or comma/space separated)</span>
@@ -199,11 +239,19 @@
                 name="pfis"
                 rows="6"
                 placeholder="12345678&#10;87654321&#10;11223344"
-                required
             ></textarea>
         </div>
 
-        <div class="form-group">
+        <div class="form-group" id="shapefile-input" style="display: none;">
+            <label for="shapefile_upload">
+                Shapefile Upload
+                <span class="label-hint">(ZIP containing .shp, .shx, .dbf, .prj files)</span>
+            </label>
+            <input type="file" id="shapefile_upload" name="shapefile_upload" accept=".zip">
+            <p class="help-text">Upload a ZIP file containing your shapefile components</p>
+        </div>
+
+        <div class="form-group" id="view-type-group">
             <label>View Type</label>
             <div class="radio-group">
                 <label class="radio-option">
