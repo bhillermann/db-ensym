@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**db-ensym** is a Python CLI tool that extracts and transforms Victorian cadastral and ecological vegetation data from a PostGIS database into standardized shapefile formats for environmental assessment workflows.
+**db-nvrmap** is a Python CLI tool that extracts and transforms Victorian cadastral and ecological vegetation data from a PostGIS database into standardized shapefile formats for environmental assessment workflows.
 
 ## Primary Script
 
@@ -216,7 +216,7 @@ nix develop  # Enter dev shell with all dependencies
 
 For local testing, set `NVRMAP_CONFIG` to the project directory:
 ```bash
-export NVRMAP_CONFIG='/home/brendon/Development/db-ensym'
+export NVRMAP_CONFIG='/home/brendon/Development/db-nvrmap'
 export NVRMAP_DB_PASSWORD='your_password'  # Or configure in flake.nix
 ```
 

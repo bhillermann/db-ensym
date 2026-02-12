@@ -115,18 +115,78 @@ class ProcessingOptions:
         return self.input_shapefile is not None
 
 
+def load_db_config_from_env() -> Dict[str, str]:
+    """Load database configuration from NVRMAP_DB_* environment variables.
+
+    Returns a dict with only the keys that have non-empty env var values.
+    """
+    env_mapping = {
+        'NVRMAP_DB_TYPE': 'db_type',
+        'NVRMAP_DB_USER': 'username',
+        'NVRMAP_DB_PASSWORD': 'password',
+        'NVRMAP_DB_HOST': 'host',
+        'NVRMAP_DB_NAME': 'database',
+    }
+    result = {}
+    for env_var, config_key in env_mapping.items():
+        value = os.environ.get(env_var, '').strip()
+        if value:
+            result[config_key] = value
+    return result
+
+
 def load_config() -> Dict[str, Any]:
-    """Load configuration from the NVRMAP_CONFIG environment variable."""
+    """Load configuration from environment variables and/or config file.
+
+    Priority (highest to lowest):
+    1. NVRMAP_DB_* environment variables
+    2. Config file at $NVRMAP_CONFIG/config.json
+    """
+    config = {}
+
+    # Try loading config file
     config_dir = os.environ.get("NVRMAP_CONFIG")
-    if not config_dir:
-        raise EnvironmentError("NVRMAP_CONFIG environment variable is not set.")
+    if config_dir:
+        config_path = Path(config_dir) / "config.json"
+        if config_path.exists():
+            with config_path.open("r") as f:
+                config = json.load(f)
 
-    config_path = Path(config_dir) / "config.json"
-    if not config_path.exists():
-        raise FileNotFoundError(f"Config file not found at {config_path}")
+    # Load DB config from environment variables
+    env_db_config = load_db_config_from_env()
 
-    with config_path.open("r") as f:
-        return json.load(f)
+    if env_db_config:
+        # Merge: env vars override file values
+        file_db_config = config.get("db_connection", {})
+        file_db_config.update(env_db_config)
+        config["db_connection"] = file_db_config
+
+    # Load other env var overrides
+    evc_data = os.environ.get("NVRMAP_EVC_DATA", "").strip()
+    if evc_data:
+        config["evc_data"] = evc_data
+
+    # Validate we have enough config
+    if "db_connection" not in config:
+        raise EnvironmentError(
+            "No database configuration found. Set NVRMAP_DB_* environment variables "
+            "or provide a config file via NVRMAP_CONFIG."
+        )
+
+    required_db_keys = {"db_type", "username", "password", "host", "database"}
+    missing = required_db_keys - set(config["db_connection"].keys())
+    if missing:
+        raise EnvironmentError(
+            f"Incomplete database configuration. Missing: {', '.join(sorted(missing))}. "
+            "Set NVRMAP_DB_* environment variables or provide them in config.json."
+        )
+
+    return config
+
+
+def get_attribute(config: Dict[str, Any], key: str, default=None):
+    """Get a value from the attribute_table section of config."""
+    return config.get("attribute_table", {}).get(key, default)
 
 
 def connect_db(db_config: Dict[str, str]) -> Tuple[Any, Dict[str, Any]]:

@@ -16,18 +16,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 import sys
 
-# Add parent directory to path to import from db-nvrmap.py
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-# Import using module name without hyphen
-import importlib.util
-spec = importlib.util.spec_from_file_location("db_nvrmap", Path(__file__).parent.parent / "db-nvrmap.py")
-db_nvrmap = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(db_nvrmap)
-
-load_db_config_from_env = db_nvrmap.load_db_config_from_env
-load_config = db_nvrmap.load_config
-get_attribute = db_nvrmap.get_attribute
+from db_nvrmap.core import load_db_config_from_env, load_config, get_attribute
 
 
 class TestLoadDbConfigFromEnv:

@@ -37,7 +37,7 @@
     in {
       packages = forAllSystems ({ pkgs, pythonEnv, ... }: {
 	default = pkgs.stdenv.mkDerivation {
-	  pname = "db-ensym";
+	  pname = "db-nvrmap";
 	  version = "1.2";
 
           src = ./.;

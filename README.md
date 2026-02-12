@@ -1,4 +1,4 @@
-# db-ensym
+# db-nvrmap
 
 Use PostGIS database with VicData shapefiles to generate EnSym and NVRMap compatible shapefiles.
 
@@ -232,21 +232,21 @@ This project provides a Nix flake for reproducible builds and development enviro
 
 ### Using as a Flake Input
 
-To use `db-ensym` as an input in your own Nix flake:
+To use `db-nvrmap` as an input in your own Nix flake:
 
 ```nix
 {
-  description = "My flake using db-ensym";
+  description = "My flake using db-nvrmap";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    db-ensym = {
-      url = "github:your-username/db-ensym";  # Or path:/path/to/db-ensym
+    db-nvrmap = {
+      url = "github:your-username/db-nvrmap";  # Or path:/path/to/db-nvrmap
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
-  outputs = { self, nixpkgs, db-ensym, ... }:
+  outputs = { self, nixpkgs, db-nvrmap, ... }:
     let
       system = "x86_64-linux";  # Or your target system
       pkgs = nixpkgs.legacyPackages.${system};
@@ -255,14 +255,14 @@ To use `db-ensym` as an input in your own Nix flake:
       packages.${system}.default = pkgs.stdenv.mkDerivation {
         pname = "my-package";
         version = "1.0";
-        buildInputs = [ db-ensym.packages.${system}.default ];
+        buildInputs = [ db-nvrmap.packages.${system}.default ];
         # ...
       };
 
       # Or include it in a dev shell
       devShells.${system}.default = pkgs.mkShell {
         buildInputs = [
-          db-ensym.packages.${system}.default
+          db-nvrmap.packages.${system}.default
         ];
       };
     };
@@ -281,7 +281,7 @@ The flake supports the following systems:
 
 ```bash
 # Run directly without installing
-nix run github:your-username/db-ensym -- 12345678
+nix run github:your-username/db-nvrmap -- 12345678
 
 # Run from a local checkout
 nix run . -- 12345678
@@ -296,7 +296,7 @@ Enter a development shell with all dependencies:
 nix develop
 
 # Or from anywhere
-nix develop github:your-username/db-ensym
+nix develop github:your-username/db-nvrmap
 ```
 
 The development shell includes Python 3 with the following packages:
@@ -324,7 +324,7 @@ nix build
 
 ```bash
 # Install to your user profile
-nix profile install github:your-username/db-ensym
+nix profile install github:your-username/db-nvrmap
 
 # Or from local checkout
 nix profile install .

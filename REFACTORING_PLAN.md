@@ -1,4 +1,4 @@
-# db-ensym Refactoring Plan
+# db-nvrmap Refactoring Plan
 
 ## Overview
 
