@@ -85,9 +85,9 @@ def create_app() -> Flask:
         filename = request.form.get("filename", "").strip() or "output"
         gainscore_str = request.form.get("gainscore", "").strip()
 
-        # Validate filename (server-side security check)
-        if not re.match(r'^[a-zA-Z0-9_-]+$', filename):
-            flash("Invalid filename. Use only letters, numbers, underscores, and hyphens.", "error")
+        # Validate filename (server-side security check) — block path traversal, allow spaces/dots/parens
+        if not re.match(r'^[a-zA-Z0-9][a-zA-Z0-9 ._(),-]*$', filename) or '..' in filename:
+            flash("Invalid filename. Use letters, numbers, spaces, dots, underscores, hyphens, and parentheses.", "error")
             return redirect(url_for("index"))
 
         # Parse gain score
