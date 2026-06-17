@@ -100,6 +100,12 @@ Examples:
         default=4,
         help="Number of Gunicorn worker processes (default: 4, only used with --production)"
     )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=600,
+        help="Gunicorn worker timeout in seconds (default: 600, only used with --production)"
+    )
 
     return parser.parse_args(args)
 
@@ -175,8 +181,10 @@ def run_web(args: argparse.Namespace) -> int:
         options = {
             'bind': f'{args.host}:{args.port}',
             'workers': args.workers,
+            'timeout': args.timeout,
+            'graceful_timeout': 30,
         }
-        print(f"Starting Gunicorn with {args.workers} workers at http://{args.host}:{args.port}")
+        print(f"Starting Gunicorn with {args.workers} workers (timeout {args.timeout}s) at http://{args.host}:{args.port}")
         StandaloneApplication(app, options).run()
     else:
         app = create_app()
