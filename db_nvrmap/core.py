@@ -370,7 +370,8 @@ def build_query_from_geometry(
 
 def load_geo_dataframe(engine, query: Any) -> gpd.GeoDataFrame:
     """Load spatial data into a GeoDataFrame."""
-    gdf = gpd.GeoDataFrame.from_postgis(query, con=engine.connect(), geom_col="geom")
+    with engine.connect() as conn:
+        gdf = gpd.GeoDataFrame.from_postgis(query, con=conn, geom_col="geom")
     if gdf.empty:
         raise ValueError("No search results found. Check your View PFI values.")
     return gdf.set_crs(DEFAULT_CRS)
